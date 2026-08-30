@@ -1,12 +1,12 @@
-﻿# 🎵 Beat Bonga (Jaribu Beats) — System Architecture & Technical Documentation
+# 🎵 Jaribu — System Architecture & Technical Documentation
 
-This document provides a comprehensive technical breakdown of **Beat Bonga (Jaribu Beats)**, covering system architecture, game engine internals, scoring algorithms, music discovery APIs, real-time protocols, database schemas, frontend component hierarchies, and deployment configurations.
+This document provides a comprehensive technical breakdown of **Jaribu**, covering system architecture, game engine internals, scoring algorithms, music discovery APIs, real-time protocols, database schemas, frontend component hierarchies, and deployment configurations.
 
 ---
 
 ## 1. System Architecture Overview
 
-Beat Bonga is engineered as a distributed, low-latency music quiz ecosystem comprising a high-throughput **Go backend** and a reactive **React Native / Expo frontend** optimized for mobile and web viewports.
+Jaribu is engineered as a distributed, low-latency music quiz ecosystem comprising a high-throughput **Go backend** and a reactive **React Native / Expo frontend** optimized for mobile and web viewports.
 
 ```
 +-----------------------------------------------------------------------------------+

@@ -164,7 +164,7 @@ export default function HomeScreen({
             <Text style={styles.logoEmoji}>🎵</Text>
           </View>
           <View>
-            <Text style={styles.appTitle}>Beat Bonga</Text>
+            <Text style={styles.appTitle}>Jaribu</Text>
             <Text style={styles.appSubtitle}>Song Snippet Quiz</Text>
           </View>
         </View>

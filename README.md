@@ -1,8 +1,8 @@
-﻿# 🎵 Beat Bonga (Jaribu Beats) — Song Snippet Quiz Game
+# 🎵 Jaribu — Song Snippet Quiz Game
 
 <div align="center">
 
-![Beat Bonga Logo](frontend/assets/icon.png)
+![Jaribu Logo](frontend/assets/icon.png)
 
 **The Ultimate Real-Time Music Snippet Quiz Application**  
 *Test your musical ear against the clock in Solo Rush, battle friends in Pass & Play, or challenge your mastery with Artist Spotlight mode!*
