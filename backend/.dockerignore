@@ -1,0 +1,6 @@
+﻿jaribu-server.exe
+server.exe
+*.log
+.git
+.idea
+.vscode
