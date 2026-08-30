@@ -10,6 +10,7 @@ class AudioManager {
     this.isPlaying = false;
     this.snippetTimer = null;
     this.isUnlocked = false;
+    this.playbackId = 0; // Monotonic token preventing asynchronous audio overlap
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       this.initWebAudio();
@@ -104,8 +105,9 @@ class AudioManager {
     });
   }
 
-  // Play music stream preview (mp3) with resilient multi-tier playback
+  // Play music stream preview (mp3) with token-based concurrency control
   async playSongPreview(url, snippetDurationSec = 10, onPlaybackEnd = null) {
+    // 1. Immediately kill any currently active sound
     await this.stopSongPreview();
 
     if (!url) {
@@ -113,6 +115,8 @@ class AudioManager {
       return;
     }
 
+    // 2. Generate unique playback token for this specific question
+    const currentToken = ++this.playbackId;
     this.unlockAudio();
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -124,11 +128,22 @@ class AudioManager {
 
         const tryPlay = (streamUrl) => {
           return new Promise((resolve, reject) => {
+            if (this.playbackId !== currentToken) {
+              reject(new Error('Playback superseded'));
+              return;
+            }
+
             audio.src = streamUrl;
             const playPromise = audio.play();
             if (playPromise !== undefined) {
               playPromise
                 .then(() => {
+                  if (this.playbackId !== currentToken) {
+                    audio.pause();
+                    audio.src = '';
+                    reject(new Error('Playback cancelled after resolve'));
+                    return;
+                  }
                   this.isPlaying = true;
                   resolve(true);
                 })
@@ -136,25 +151,37 @@ class AudioManager {
                   reject(err);
                 });
             } else {
+              if (this.playbackId !== currentToken) {
+                audio.pause();
+                audio.src = '';
+                reject(new Error('Playback cancelled'));
+                return;
+              }
               this.isPlaying = true;
               resolve(true);
             }
           });
         };
 
-        // Try direct stream first (most CDNs allow direct <audio> src without CORS restrictions)
-        tryPlay(url).catch(() => {
-          // If blocked, fallback to backend proxy stream
-          const proxyUrl = `${API_BASE}/audio/proxy?url=${encodeURIComponent(url)}`;
-          return tryPlay(proxyUrl);
-        }).catch((e) => {
-          console.warn('Audio playback could not auto-start:', e);
-        });
+        // Try direct stream first, fallback to proxy
+        tryPlay(url)
+          .catch(() => {
+            if (this.playbackId !== currentToken) return;
+            const proxyUrl = `${API_BASE}/audio/proxy?url=${encodeURIComponent(url)}`;
+            return tryPlay(proxyUrl);
+          })
+          .catch((e) => {
+            if (this.playbackId === currentToken) {
+              console.warn('Audio playback could not auto-start:', e.message);
+            }
+          });
 
         if (snippetDurationSec > 0) {
           this.snippetTimer = setTimeout(() => {
-            this.stopSongPreview();
-            if (onPlaybackEnd) onPlaybackEnd();
+            if (this.playbackId === currentToken) {
+              this.stopSongPreview();
+              if (onPlaybackEnd) onPlaybackEnd();
+            }
           }, snippetDurationSec * 1000);
         }
       } catch (err) {
@@ -169,37 +196,61 @@ class AudioManager {
           shouldDuckAndroid: true,
         });
 
+        if (this.playbackId !== currentToken) return;
+
         const { sound } = await Audio.Sound.createAsync(
           { uri: url },
           { shouldPlay: true, volume: 1.0 }
         );
+
+        if (this.playbackId !== currentToken) {
+          // Token changed while loading sound; immediately unload and abort
+          sound.stopAsync().catch(() => {});
+          sound.unloadAsync().catch(() => {});
+          return;
+        }
+
         this.soundObject = sound;
         this.isPlaying = true;
 
         if (snippetDurationSec > 0) {
           this.snippetTimer = setTimeout(async () => {
-            await this.stopSongPreview();
-            if (onPlaybackEnd) onPlaybackEnd();
+            if (this.playbackId === currentToken) {
+              await this.stopSongPreview();
+              if (onPlaybackEnd) onPlaybackEnd();
+            }
           }, snippetDurationSec * 1000);
         }
       } catch (err) {
-        console.warn('Mobile audio playback error, trying proxy fallback:', err);
+        if (this.playbackId !== currentToken) return;
         try {
           const proxyUrl = `${API_BASE}/audio/proxy?url=${encodeURIComponent(url)}`;
           const { sound } = await Audio.Sound.createAsync(
             { uri: proxyUrl },
             { shouldPlay: true, volume: 1.0 }
           );
+
+          if (this.playbackId !== currentToken) {
+            sound.stopAsync().catch(() => {});
+            sound.unloadAsync().catch(() => {});
+            return;
+          }
+
           this.soundObject = sound;
           this.isPlaying = true;
         } catch (e2) {
-          console.error('All mobile audio playback attempts failed:', e2);
+          if (this.playbackId === currentToken) {
+            console.error('All mobile audio playback attempts failed:', e2);
+          }
         }
       }
     }
   }
 
   async stopSongPreview() {
+    // Invalidate any in-flight playback token immediately
+    this.playbackId++;
+
     if (this.snippetTimer) {
       clearTimeout(this.snippetTimer);
       this.snippetTimer = null;
@@ -207,19 +258,22 @@ class AudioManager {
 
     if (Platform.OS === 'web' && this.currentAudio) {
       try {
-        this.currentAudio.pause();
-        this.currentAudio.src = '';
-        this.currentAudio.load();
+        const audio = this.currentAudio;
+        audio.pause();
+        audio.currentTime = 0;
+        audio.removeAttribute('src');
+        audio.load();
       } catch (e) {}
       this.currentAudio = null;
     }
 
     if (this.soundObject) {
       try {
-        await this.soundObject.stopAsync();
-        await this.soundObject.unloadAsync();
+        const sound = this.soundObject;
+        this.soundObject = null;
+        await sound.stopAsync();
+        await sound.unloadAsync();
       } catch (e) {}
-      this.soundObject = null;
     }
 
     this.isPlaying = false;

@@ -42,6 +42,7 @@ export default function SoloGameScreen({
 
   const startTimeRef = useRef(Date.now());
   const timerActiveRef = useRef(true);
+  const isTransitioningRef = useRef(false);
 
   // Initialize Game on Mount
   useEffect(() => {
@@ -55,6 +56,7 @@ export default function SoloGameScreen({
     try {
       setIsLoading(true);
       setError(null);
+      isTransitioningRef.current = false;
       const data = await startSoloGame({
         playerName,
         avatarEmoji,
@@ -65,18 +67,20 @@ export default function SoloGameScreen({
       });
 
       setSession(data);
-      setCurrentQuestion(data.first_question);
       setRoundNumber(1);
       setScore(0);
       setStreak(0);
+      setMaxStreak(0);
+      setCurrentQuestion(data.first_question);
       setIsGameOver(false);
       setRoundResult(null);
       setSelectedOption(null);
 
+      // Start playing preview for first question
       playQuestionSnippet(data.first_question);
     } catch (e) {
-      console.error('Game initialization failed:', e);
-      setError(e.message || 'Failed to start game session');
+      console.error('Failed to init solo game:', e);
+      setError(e.message || 'Failed to connect to game server');
     } finally {
       setIsLoading(false);
     }
@@ -84,6 +88,7 @@ export default function SoloGameScreen({
 
   const playQuestionSnippet = (question) => {
     if (!question || !question.preview_url) return;
+
     startTimeRef.current = Date.now();
     timerActiveRef.current = true;
     setIsPlayingAudio(true);
@@ -98,9 +103,14 @@ export default function SoloGameScreen({
   };
 
   const handleSelectOption = async (option) => {
-    if (isAnswering || roundResult || isGameOver) return;
+    if (isAnswering || roundResult || isGameOver || isTransitioningRef.current) return;
+
+    // Immediately silence any playing audio snippet upon answering
+    audioManager.stopSongPreview();
+    setIsPlayingAudio(false);
 
     setIsAnswering(true);
+    isTransitioningRef.current = true;
     timerActiveRef.current = false;
     setSelectedOption(option);
     const timeTaken = Date.now() - startTimeRef.current;
@@ -146,22 +156,34 @@ export default function SoloGameScreen({
       }
     } catch (e) {
       console.error('Answer submission error:', e);
+      isTransitioningRef.current = false;
     } finally {
       setIsAnswering(false);
     }
   };
 
-  const handleTimeUp = () => {
-    if (roundResult || isGameOver || isAnswering) return;
+  const handleTimeUp = (forQuestionId) => {
+    if (roundResult || isGameOver || isAnswering || isTransitioningRef.current) return;
+    // Guard against stale timer events from previous questions
+    if (forQuestionId && currentQuestion && forQuestionId !== currentQuestion.id) {
+      return;
+    }
     // Auto-fail on timeout
     handleSelectOption({ id: 'timeout', title: 'Time Up!', artist: '' });
   };
 
   const advanceToNextQuestion = (nextQ) => {
+    // Ensure all previous audio is completely stopped
+    audioManager.stopSongPreview();
+    setIsPlayingAudio(false);
+
     setRoundResult(null);
     setSelectedOption(null);
     setRoundNumber((prev) => prev + 1);
     setCurrentQuestion(nextQ);
+    isTransitioningRef.current = false;
+
+    // Start playback for the new question
     playQuestionSnippet(nextQ);
   };
 
@@ -346,9 +368,11 @@ export default function SoloGameScreen({
 
       {/* Countdown Timer Bar */}
       <CountdownTimer
+        key={`solo-timer-${currentQuestion?.id || roundNumber}`}
+        questionId={currentQuestion?.id}
         durationMs={currentQuestion?.duration_limit_ms || 10000}
-        isActive={!roundResult && !isGameOver}
-        onTimeUp={handleTimeUp}
+        isActive={!roundResult && !isGameOver && !isAnswering}
+        onTimeUp={(qId) => handleTimeUp(qId)}
       />
 
       {/* Question Prompt */}

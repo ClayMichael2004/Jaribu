@@ -4,6 +4,7 @@ import { COLORS } from '../constants/theme';
 import { audioManager } from '../utils/audio';
 
 export default function CountdownTimer({
+  questionId,
   durationMs = 10000,
   isActive = true,
   onTimeUp,
@@ -15,12 +16,20 @@ export default function CountdownTimer({
   const startTimeRef = useRef(Date.now());
   const timerRef = useRef(null);
   const lastTickSecRef = useRef(Math.ceil(durationMs / 1000));
+  const hasFiredRef = useRef(false);
 
   useEffect(() => {
+    // Reset state whenever question, duration, or active state changes
     setTimeLeftMs(durationMs);
     startTimeRef.current = Date.now();
     lastTickSecRef.current = Math.ceil(durationMs / 1000);
+    hasFiredRef.current = false;
     progressAnim.setValue(1);
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
 
     if (!isActive) return;
 
@@ -49,17 +58,27 @@ export default function CountdownTimer({
       }
 
       if (remaining <= 0) {
-        clearInterval(timerRef.current);
-        if (onTimeUp) {
-          onTimeUp();
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+
+        if (!hasFiredRef.current) {
+          hasFiredRef.current = true;
+          if (onTimeUp) {
+            onTimeUp(questionId);
+          }
         }
       }
     }, 40);
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
-  }, [durationMs, isActive]);
+  }, [questionId, durationMs, isActive]);
 
   const seconds = (timeLeftMs / 1000).toFixed(1);
   const ratio = timeLeftMs / durationMs;
