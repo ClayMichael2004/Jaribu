@@ -38,6 +38,7 @@ export default function PassPlayGameScreen({
   const [error, setError] = useState(null);
 
   const startTimeRef = useRef(Date.now());
+  const isTransitioningRef = useRef(false);
 
   useEffect(() => {
     initMatch();
@@ -50,6 +51,7 @@ export default function PassPlayGameScreen({
     try {
       setIsLoading(true);
       setError(null);
+      isTransitioningRef.current = false;
       const data = await startPassPlayGame({
         players,
         category,
@@ -76,6 +78,7 @@ export default function PassPlayGameScreen({
 
   const handlePlayerReady = () => {
     audioManager.playClick();
+    isTransitioningRef.current = false;
     setIsReadyPhase(false);
     playQuestionSnippet(currentQuestion);
   };
@@ -95,9 +98,14 @@ export default function PassPlayGameScreen({
   };
 
   const handleSelectOption = async (option) => {
-    if (isAnswering || roundResult || isGameOver) return;
+    if (isAnswering || roundResult || isGameOver || isTransitioningRef.current || isReadyPhase) return;
+
+    // Immediately stop audio when answering
+    audioManager.stopSongPreview();
+    setIsPlayingAudio(false);
 
     setIsAnswering(true);
+    isTransitioningRef.current = true;
     setSelectedOption(option);
     const timeTaken = Date.now() - startTimeRef.current;
 
@@ -129,23 +137,30 @@ export default function PassPlayGameScreen({
         setTimeout(() => {
           // Advance to next player turn
           audioManager.stopSongPreview();
+          setIsPlayingAudio(false);
           setCurrentTurnIndex((prev) => prev + 1);
           setCurrentPlayer(res.next_player);
           setCurrentQuestion(res.next_question);
           setRoundResult(null);
           setSelectedOption(null);
+          isTransitioningRef.current = false;
           setIsReadyPhase(true); // Prompt to pass phone
         }, 2200);
       }
     } catch (e) {
       console.error('Answer submission error:', e);
+      isTransitioningRef.current = false;
     } finally {
       setIsAnswering(false);
     }
   };
 
-  const handleTimeUp = () => {
-    if (roundResult || isGameOver || isAnswering) return;
+  const handleTimeUp = (forQuestionId) => {
+    if (roundResult || isGameOver || isAnswering || isTransitioningRef.current || isReadyPhase) return;
+    // Guard against stale timer events from previous questions
+    if (forQuestionId && currentQuestion && forQuestionId !== currentQuestion.id) {
+      return;
+    }
     handleSelectOption({ id: 'timeout', title: 'Time Up!', artist: '' });
   };
 
@@ -367,9 +382,11 @@ export default function PassPlayGameScreen({
 
       {/* Countdown Timer */}
       <CountdownTimer
+        key={`passplay-timer-${currentQuestion?.id || currentTurnIndex}`}
+        questionId={currentQuestion?.id}
         durationMs={currentQuestion?.duration_limit_ms || 10000}
-        isActive={!roundResult && !isGameOver}
-        onTimeUp={handleTimeUp}
+        isActive={!roundResult && !isGameOver && !isReadyPhase && !isAnswering}
+        onTimeUp={(qId) => handleTimeUp(qId)}
       />
 
       {/* Prompt */}
