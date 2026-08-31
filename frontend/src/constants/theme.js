@@ -109,7 +109,7 @@ export const AVATAR_COLORS = [
 ];
 
 export const DEFAULT_PLAYERS = [
-  { id: 'p1', name: 'Clay', avatarEmoji: '🎧', avatarColor: '#c0c1ff' },
+  { id: 'p1', name: 'DJ Nova', avatarEmoji: '🎧', avatarColor: '#c0c1ff' },
   { id: 'p2', name: 'NairobiVibes', avatarEmoji: '⚡', avatarColor: '#4edea3' },
   { id: 'p3', name: 'BeatMaster99', avatarEmoji: '🔥', avatarColor: '#ffb95f' },
   { id: 'p4', name: 'VinylQueen', avatarEmoji: '⭐', avatarColor: '#ff70a6' },

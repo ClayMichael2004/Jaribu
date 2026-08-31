@@ -1,16 +1,15 @@
 import { Platform } from 'react-native';
-import { Audio } from 'expo-av';
 import { API_BASE } from '../config/api';
 
 class AudioManager {
   constructor() {
-    this.soundObject = null;
-    this.currentAudio = null;
     this.audioContext = null;
+    this.currentAudio = null;
     this.isPlaying = false;
     this.snippetTimer = null;
     this.isUnlocked = false;
     this.playbackId = 0; // Monotonic token preventing asynchronous audio overlap
+    this.preloadedAudioMap = new Map(); // Cache of pre-buffered Audio objects
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       this.initWebAudio();
@@ -25,6 +24,17 @@ class AudioManager {
           this.audioContext = new AudioCtx();
         } catch (e) {}
       }
+
+      // Auto-unlock audio context on any user tap / key
+      const unlock = () => {
+        this.unlockAudio();
+        window.removeEventListener('click', unlock);
+        window.removeEventListener('keydown', unlock);
+        window.removeEventListener('touchstart', unlock);
+      };
+      window.addEventListener('click', unlock, { once: true, passive: true });
+      window.addEventListener('keydown', unlock, { once: true, passive: true });
+      window.addEventListener('touchstart', unlock, { once: true, passive: true });
     }
   }
 
@@ -72,17 +82,17 @@ class AudioManager {
     const notes = [523.25, 659.25, 783.99, 1046.5];
     notes.forEach((freq, idx) => {
       setTimeout(() => {
-        this.playTone(freq, 'triangle', 0.3, 0.2);
-      }, idx * 75);
+        this.playTone(freq, 'triangle', 0.25, 0.2);
+      }, idx * 60);
     });
   }
 
   playWrong() {
     this.unlockAudio();
-    this.playTone(180, 'sawtooth', 0.2, 0.3);
+    this.playTone(180, 'sawtooth', 0.2, 0.25);
     setTimeout(() => {
-      this.playTone(130, 'sawtooth', 0.3, 0.35);
-    }, 120);
+      this.playTone(130, 'sawtooth', 0.25, 0.3);
+    }, 100);
   }
 
   playStreak() {
@@ -91,7 +101,7 @@ class AudioManager {
     notes.forEach((freq, idx) => {
       setTimeout(() => {
         this.playTone(freq, 'sine', 0.2, 0.25);
-      }, idx * 60);
+      }, idx * 50);
     });
   }
 
@@ -100,13 +110,37 @@ class AudioManager {
     const chord = [523.25, 659.25, 783.99, 1046.5, 1318.51];
     chord.forEach((f, i) => {
       setTimeout(() => {
-        this.playTone(f, 'triangle', 0.5, 0.25);
-      }, i * 90);
+        this.playTone(f, 'triangle', 0.45, 0.22);
+      }, i * 80);
     });
   }
 
-  // Play music stream preview (mp3) with token-based concurrency control
-  async playSongPreview(url, snippetDurationSec = 10, onPlaybackEnd = null) {
+  // Pre-buffer next audio track in memory to eliminate inter-round latency
+  preBufferAudio(url) {
+    if (!url || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (this.preloadedAudioMap.has(url)) return;
+
+    try {
+      const audio = new window.Audio();
+      audio.preload = 'auto';
+      audio.src = url;
+      audio.load();
+      this.preloadedAudioMap.set(url, audio);
+
+      // Clean up oldest if cache exceeds 10 items
+      if (this.preloadedAudioMap.size > 10) {
+        const firstKey = this.preloadedAudioMap.keys().next().value;
+        const oldAudio = this.preloadedAudioMap.get(firstKey);
+        if (oldAudio) {
+          oldAudio.src = '';
+        }
+        this.preloadedAudioMap.delete(firstKey);
+      }
+    } catch (e) {}
+  }
+
+  // Play music stream preview (mp3/m4a) with zero latency & instant proxy fallback
+  async playSongPreview(url, snippetDurationSec = 8, onPlaybackEnd = null) {
     // 1. Immediately kill any currently active sound
     await this.stopSongPreview();
 
@@ -121,12 +155,20 @@ class AudioManager {
 
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       try {
-        const audio = new window.Audio();
-        audio.preload = 'auto';
+        let audio = this.preloadedAudioMap.get(url);
+        if (!audio) {
+          audio = new window.Audio();
+          audio.preload = 'auto';
+          audio.src = url;
+        } else {
+          this.preloadedAudioMap.delete(url);
+        }
+
         audio.volume = 1.0;
+        audio.currentTime = 0;
         this.currentAudio = audio;
 
-        const tryPlay = (streamUrl) => {
+        const executePlay = (streamUrl) => {
           return new Promise((resolve, reject) => {
             if (this.playbackId !== currentToken) {
               reject(new Error('Playback superseded'));
@@ -135,13 +177,14 @@ class AudioManager {
 
             audio.src = streamUrl;
             const playPromise = audio.play();
+
             if (playPromise !== undefined) {
               playPromise
                 .then(() => {
                   if (this.playbackId !== currentToken) {
                     audio.pause();
                     audio.src = '';
-                    reject(new Error('Playback cancelled after resolve'));
+                    reject(new Error('Playback cancelled'));
                     return;
                   }
                   this.isPlaying = true;
@@ -151,28 +194,23 @@ class AudioManager {
                   reject(err);
                 });
             } else {
-              if (this.playbackId !== currentToken) {
-                audio.pause();
-                audio.src = '';
-                reject(new Error('Playback cancelled'));
-                return;
-              }
               this.isPlaying = true;
               resolve(true);
             }
           });
         };
 
-        // Try direct stream first, fallback to proxy
-        tryPlay(url)
+        // Attempt direct stream playback first
+        executePlay(url)
           .catch(() => {
+            // Instant fallback to backend proxy if CDN or CORS restricted
             if (this.playbackId !== currentToken) return;
             const proxyUrl = `${API_BASE}/audio/proxy?url=${encodeURIComponent(url)}`;
-            return tryPlay(proxyUrl);
+            return executePlay(proxyUrl);
           })
           .catch((e) => {
             if (this.playbackId === currentToken) {
-              console.warn('Audio playback could not auto-start:', e.message);
+              console.warn('Audio playback info:', e.message);
             }
           });
 
@@ -184,73 +222,14 @@ class AudioManager {
             }
           }, snippetDurationSec * 1000);
         }
-      } catch (err) {
-        console.warn('Web audio playback exception:', err);
-      }
-    } else {
-      // React Native Expo-AV for Mobile (Android / iOS)
-      try {
-        await Audio.setAudioModeAsync({
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: false,
-          shouldDuckAndroid: true,
-        });
-
-        if (this.playbackId !== currentToken) return;
-
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: url },
-          { shouldPlay: true, volume: 1.0 }
-        );
-
-        if (this.playbackId !== currentToken) {
-          // Token changed while loading sound; immediately unload and abort
-          sound.stopAsync().catch(() => {});
-          sound.unloadAsync().catch(() => {});
-          return;
-        }
-
-        this.soundObject = sound;
-        this.isPlaying = true;
-
-        if (snippetDurationSec > 0) {
-          this.snippetTimer = setTimeout(async () => {
-            if (this.playbackId === currentToken) {
-              await this.stopSongPreview();
-              if (onPlaybackEnd) onPlaybackEnd();
-            }
-          }, snippetDurationSec * 1000);
-        }
-      } catch (err) {
-        if (this.playbackId !== currentToken) return;
-        try {
-          const proxyUrl = `${API_BASE}/audio/proxy?url=${encodeURIComponent(url)}`;
-          const { sound } = await Audio.Sound.createAsync(
-            { uri: proxyUrl },
-            { shouldPlay: true, volume: 1.0 }
-          );
-
-          if (this.playbackId !== currentToken) {
-            sound.stopAsync().catch(() => {});
-            sound.unloadAsync().catch(() => {});
-            return;
-          }
-
-          this.soundObject = sound;
-          this.isPlaying = true;
-        } catch (e2) {
-          if (this.playbackId === currentToken) {
-            console.error('All mobile audio playback attempts failed:', e2);
-          }
-        }
+      } catch (e) {
+        console.warn('Web Audio Playback error:', e);
       }
     }
   }
 
   async stopSongPreview() {
-    // Invalidate any in-flight playback token immediately
-    this.playbackId++;
-
+    this.playbackId++; // Invalidate pending play operations
     if (this.snippetTimer) {
       clearTimeout(this.snippetTimer);
       this.snippetTimer = null;
@@ -258,21 +237,9 @@ class AudioManager {
 
     if (Platform.OS === 'web' && this.currentAudio) {
       try {
-        const audio = this.currentAudio;
-        audio.pause();
-        audio.currentTime = 0;
-        audio.removeAttribute('src');
-        audio.load();
-      } catch (e) {}
-      this.currentAudio = null;
-    }
-
-    if (this.soundObject) {
-      try {
-        const sound = this.soundObject;
-        this.soundObject = null;
-        await sound.stopAsync();
-        await sound.unloadAsync();
+        this.currentAudio.pause();
+        this.currentAudio.src = '';
+        this.currentAudio = null;
       } catch (e) {}
     }
 

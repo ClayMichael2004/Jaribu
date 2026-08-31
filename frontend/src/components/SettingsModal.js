@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import { audioManager } from '../utils/audio';
 export default function SettingsModal({
   visible = false,
   onClose,
-  playerName = 'Clay',
+  playerName = 'DJ Nova',
   avatarEmoji = '🎧',
   avatarColor = '#c0c1ff',
   onUpdateProfile,
@@ -29,19 +29,11 @@ export default function SettingsModal({
   const [isResetting, setIsResetting] = useState(false);
   const [showConfirmReset, setShowConfirmReset] = useState(false);
 
-  useEffect(() => {
-    if (visible) {
-      setName(playerName);
-      setSelectedEmoji(avatarEmoji);
-      setSelectedColor(avatarColor);
-    }
-  }, [visible, playerName, avatarEmoji, avatarColor]);
-
   const handleSave = () => {
     audioManager.playClick();
     if (onUpdateProfile) {
       onUpdateProfile({
-        playerName: name.trim() || 'Clay',
+        playerName: name.trim() || 'DJ Nova',
         avatarEmoji: selectedEmoji,
         avatarColor: selectedColor,
       });

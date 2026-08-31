@@ -6,284 +6,349 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
 import { COLORS } from '../constants/theme';
-import { getLeaderboard, getMyRecords, resetAllRecords } from '../config/api';
+import { getSoloGames, getMultiplayerGames, getMyRecords } from '../config/api';
 import { audioManager } from '../utils/audio';
+import TopHeader from '../components/TopHeader';
+import { Icon } from '../components/Icons';
 
-export default function LeaderboardScreen({ onBack, defaultPlayerName = 'Player 1' }) {
-  const [activeTab, setActiveTab] = useState('hall_of_fame'); // 'hall_of_fame' | 'my_records'
-  const [entries, setEntries] = useState([]);
-  const [myRecords, setMyRecords] = useState([]);
+const CATEGORY_FILTERS = [
+  { id: 'all', label: 'All Vibes', iconName: 'music' },
+  { id: 'kenyan', label: 'Kenyan Hits', iconName: 'disc' },
+  { id: 'afrobeats', label: 'Afrobeats', iconName: 'flame' },
+  { id: 'reggae', label: 'Reggae', iconName: 'headphones' },
+  { id: 'gospel', label: 'Gospel', iconName: 'star' },
+  { id: 'hiphop', label: 'Hip-Hop', iconName: 'zap' },
+  { id: 'dancehall', label: 'Dancehall', iconName: 'mic' },
+  { id: 'pop', label: 'Pop Hits', iconName: 'star' },
+];
+
+export default function LeaderboardScreen({
+  defaultPlayerName = 'Clay',
+  onBack,
+  onOpenSettings,
+  onSelectTab,
+}) {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+
+  // View Mode: 'SOLO' | 'MULTIPLAYER'
+  const [activeTab, setActiveTab] = useState('SOLO');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [isLoading, setIsLoading] = useState(true);
-  const [showConfirmReset, setShowConfirmReset] = useState(false);
 
-  const categories = [
-    { id: 'all', label: '🌟 All Highscores' },
-    { id: 'general', label: '🎲 Random Mix' },
-    { id: 'kenyan', label: '🇰🇪 Kenyan Hits' },
-    { id: 'afrobeats', label: '🌍 Afrobeats' },
-    { id: 'reggae', label: '🇯🇲 Reggae & Roots' },
-    { id: 'dancehall', label: '🔊 Dancehall' },
-    { id: 'gospel', label: '🙏 Gospel' },
-    { id: 'hiphop', label: '🎤 Hip-Hop' },
-    { id: 'pop', label: '✨ Billboard Pop' },
-    { id: 'nineties_twothousands', label: '📼 90s/2000s' },
-    { id: 'rock_classics', label: '🎸 Rock Anthems' },
-  ];
+  const [soloGames, setSoloGames] = useState([]);
+  const [multiplayerGames, setMultiplayerGames] = useState([]);
+  const [userStats, setUserStats] = useState({
+    highestScore: 0,
+    totalAccumulatedScore: 0,
+    totalGames: 0,
+    bestStreak: 0,
+  });
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (activeTab === 'hall_of_fame') {
-      loadLeaderboard();
-    } else {
-      loadMyRecords();
-    }
-  }, [activeTab, selectedCategory]);
+    loadGamesAndStats();
+  }, [activeTab, selectedCategory, defaultPlayerName]);
 
-  const loadLeaderboard = async () => {
+  const loadGamesAndStats = async () => {
     try {
       setIsLoading(true);
-      const data = await getLeaderboard({
-        category: selectedCategory === 'all' ? '' : selectedCategory,
-        limit: 25,
-      });
-      setEntries(data);
-    } catch (e) {
-      console.warn('Leaderboard load error:', e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+      const catParam = selectedCategory === 'all' ? '' : selectedCategory;
 
-  const loadMyRecords = async () => {
-    try {
-      setIsLoading(true);
-      const data = await getMyRecords(defaultPlayerName);
-      setMyRecords(data.records || []);
-    } catch (e) {
-      console.warn('My records load error:', e);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleResetRecords = async () => {
-    audioManager.playClick();
-    try {
-      setIsLoading(true);
-      await resetAllRecords();
-      setEntries([]);
-      setMyRecords([]);
-      setShowConfirmReset(false);
-      if (Platform.OS !== 'web') {
-        Alert.alert('Reset Complete', 'All player records and leaderboards have been cleared.');
+      // 1. Fetch user's all-time stats & highest record from SQLite
+      try {
+        const stats = await getMyRecords(defaultPlayerName);
+        setUserStats({
+          highestScore: stats.highest_score || 0,
+          totalAccumulatedScore: stats.total_accumulated_score || 0,
+          totalGames: stats.total_games || 0,
+          bestStreak: stats.best_streak || 0,
+        });
+      } catch (err) {
+        console.warn('Personal stats error:', err);
       }
-      loadLeaderboard();
+
+      // 2. Fetch all games for the selected mode
+      if (activeTab === 'SOLO') {
+        const games = await getSoloGames({ category: catParam, limit: 50 });
+        setSoloGames(Array.isArray(games) ? games : []);
+      } else {
+        const matches = await getMultiplayerGames({ category: catParam, limit: 50 });
+        setMultiplayerGames(Array.isArray(matches) ? matches : []);
+      }
     } catch (e) {
-      console.error('Reset error:', e);
+      console.warn('Social records fetch error:', e);
+      setSoloGames([]);
+      setMultiplayerGames([]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const formatRecordDate = (dateStr) => {
+    if (!dateStr) return 'Just now';
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return 'Recent';
     }
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={onBack}>
-          <Text style={styles.backBtnText}>← BACK</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>LEADERBOARD & RECORDS 🏆</Text>
-        <Text style={styles.subtitle}>HIGH SCORES & PERSONAL STATS</Text>
-      </View>
+    <View style={styles.container}>
+      <TopHeader
+        title="JARIBU"
+        showBack={!!onBack}
+        onBack={onBack}
+        rightAction="settings"
+        onRightAction={onOpenSettings}
+        activeTab="LEADERBOARD"
+        onTabSelect={onSelectTab}
+      />
 
-      {/* Main Mode Tabs */}
-      <View style={styles.tabBar}>
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'hall_of_fame' && styles.tabBtnActive]}
-          onPress={() => {
-            audioManager.playClick();
-            setActiveTab('hall_of_fame');
-          }}
-        >
-          <Text style={[styles.tabText, activeTab === 'hall_of_fame' && styles.tabTextActive]}>
-            🏆 HALL OF FAME
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, isDesktop && styles.contentDesktop]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header Section */}
+        <View style={styles.headerSection}>
+          <Text style={styles.headerTitle}>Socials & Game Records</Text>
+          <Text style={styles.headerSubtitle}>
+            Live match archives, high scores, and multiplayer battle histories from SQLite.
           </Text>
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.tabBtn, activeTab === 'my_records' && styles.tabBtnActive]}
-          onPress={() => {
-            audioManager.playClick();
-            setActiveTab('my_records');
-          }}
-        >
-          <Text style={[styles.tabText, activeTab === 'my_records' && styles.tabTextActive]}>
-            📊 MY RECORDS ({myRecords.length || '•'})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Reset Records Banner & Confirmation */}
-      {showConfirmReset ? (
-        <View style={styles.resetConfirmBox}>
-          <Text style={styles.resetConfirmTitle}>⚠️ Reset All Scores & Records?</Text>
-          <Text style={styles.resetConfirmSub}>
-            This will permanently wipe your highscores and match history so you can start completely fresh.
-          </Text>
-          <View style={styles.resetBtnRow}>
-            <TouchableOpacity style={styles.confirmResetBtn} onPress={handleResetRecords}>
-              <Text style={styles.confirmResetText}>YES, CLEAR ALL</Text>
-            </TouchableOpacity>
+          {/* 2 Main Game Mode Tabs: SOLO GAMES vs MULTIPLAYER MATCHES */}
+          <View style={styles.modeTabsNav}>
             <TouchableOpacity
-              style={styles.cancelResetBtn}
-              onPress={() => setShowConfirmReset(false)}
+              activeOpacity={0.8}
+              onPress={() => {
+                audioManager.playClick();
+                setActiveTab('SOLO');
+              }}
+              style={[
+                styles.modeTabBtn,
+                activeTab === 'SOLO' && styles.modeTabBtnActive,
+              ]}
             >
-              <Text style={styles.cancelResetText}>CANCEL</Text>
+              <Icon
+                name="zap"
+                size={14}
+                color={activeTab === 'SOLO' ? COLORS.primaryLight : COLORS.textSecondary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.modeTabText,
+                  activeTab === 'SOLO' && styles.modeTabTextActive,
+                ]}
+              >
+                SOLO GAMES
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                audioManager.playClick();
+                setActiveTab('MULTIPLAYER');
+              }}
+              style={[
+                styles.modeTabBtn,
+                activeTab === 'MULTIPLAYER' && styles.modeTabBtnActiveMulti,
+              ]}
+            >
+              <Icon
+                name="users"
+                size={14}
+                color={activeTab === 'MULTIPLAYER' ? COLORS.secondary : COLORS.textSecondary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.modeTabText,
+                  activeTab === 'MULTIPLAYER' && styles.modeTabTextActiveMulti,
+                ]}
+              >
+                MULTIPLAYER MATCHES
+              </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      ) : (
-        <View style={styles.topActionsRow}>
-          <TouchableOpacity
-            style={styles.resetActionBtn}
-            onPress={() => {
-              audioManager.playClick();
-              setShowConfirmReset(true);
-            }}
-          >
-            <Text style={styles.resetActionText}>🗑️ CLEAR / RESET MY RECORDS</Text>
-          </TouchableOpacity>
-        </View>
-      )}
 
-      {/* HALL OF FAME TAB */}
-      {activeTab === 'hall_of_fame' && (
-        <>
-          {/* Category Filter Pills */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll}>
-            {categories.map((cat) => {
-              const isSelected = selectedCategory === cat.id;
-              return (
-                <TouchableOpacity
-                  key={cat.id}
-                  style={[styles.filterPill, isSelected && styles.filterPillActive]}
-                  onPress={() => {
-                    audioManager.playClick();
-                    setSelectedCategory(cat.id);
-                  }}
-                >
-                  <Text style={[styles.filterText, isSelected && styles.filterTextActive]}>
-                    {cat.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          {/* Deduplicated Leaderboard Entries */}
-          {isLoading ? (
-            <ActivityIndicator size="large" color={COLORS.accentAmber} style={{ marginTop: 30 }} />
-          ) : entries.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyEmoji}>🎧</Text>
-              <Text style={styles.emptyText}>No highscores recorded yet!</Text>
-              <Text style={styles.emptySub}>Play Solo Rush or Pass & Play to set the first score.</Text>
-            </View>
-          ) : (
-            <View style={styles.listContainer}>
-              {entries.map((entry, idx) => {
-                const isTop3 = idx < 3;
+          {/* Category Chips Filter: All Vibes, Kenyan Hits, Afrobeats, etc. */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+            <View style={styles.categoryChipsRow}>
+              {CATEGORY_FILTERS.map((cat) => {
+                const isSelected = selectedCategory === cat.id;
                 return (
-                  <View
-                    key={entry.id || idx}
+                  <TouchableOpacity
+                    key={cat.id}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      audioManager.playClick();
+                      setSelectedCategory(cat.id);
+                    }}
                     style={[
-                      styles.entryCard,
-                      isTop3 && {
-                        borderColor: idx === 0 ? '#FFD700' : idx === 1 ? '#C0C0C0' : '#CD7F32',
-                      },
+                      styles.catChip,
+                      isSelected && styles.catChipActive,
                     ]}
                   >
-                    {/* Rank Badge */}
-                    <View style={styles.rankBox}>
-                      <Text style={styles.rankEmoji}>
-                        {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`}
-                      </Text>
-                    </View>
-
-                    {/* Avatar */}
-                    <View
-                      style={[
-                        styles.avatarBox,
-                        { backgroundColor: entry.avatar_color || COLORS.primary },
-                      ]}
-                    >
-                      <Text style={styles.avatarEmoji}>{entry.avatar_emoji || '🦁'}</Text>
-                    </View>
-
-                    {/* Info */}
-                    <View style={styles.playerInfo}>
-                      <Text style={styles.playerName} numberOfLines={1}>
-                        {entry.player_name}
-                      </Text>
-                      <View style={styles.metaRow}>
-                        <Text style={styles.metaBadge}>{entry.category.toUpperCase()}</Text>
-                        <Text style={styles.metaBadge}>{entry.difficulty.toUpperCase()}</Text>
-                        {entry.max_streak > 1 && (
-                          <Text style={styles.metaStreak}>🔥 {entry.max_streak}x streak</Text>
-                        )}
-                      </View>
-                    </View>
-
-                    {/* Score */}
-                    <View style={styles.scoreBox}>
-                      <Text style={styles.scoreNumber}>{entry.score}</Text>
-                      <Text style={styles.scoreLabel}>BEST SCORE</Text>
-                    </View>
-                  </View>
+                    <Icon
+                      name={cat.iconName || 'music'}
+                      size={12}
+                      color={isSelected ? COLORS.secondary : COLORS.textSecondary}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={[styles.catChipText, isSelected && styles.catChipTextActive]}>
+                      {cat.label}
+                    </Text>
+                  </TouchableOpacity>
                 );
               })}
             </View>
-          )}
-        </>
-      )}
-
-      {/* MY RECORDS & HISTORY TAB */}
-      {activeTab === 'my_records' && (
-        <View style={styles.myRecordsContainer}>
-          {isLoading ? (
-            <ActivityIndicator size="large" color={COLORS.accentMint} style={{ marginTop: 30 }} />
-          ) : myRecords.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyEmoji}>📊</Text>
-              <Text style={styles.emptyText}>No game history recorded yet!</Text>
-              <Text style={styles.emptySub}>Your individual game scores and stats will show up here.</Text>
-            </View>
-          ) : (
-            <View style={styles.listContainer}>
-              {myRecords.map((rec, idx) => (
-                <View key={rec.id || idx} style={styles.recordCard}>
-                  <View style={styles.recordHeader}>
-                    <View style={styles.recordCatBadge}>
-                      <Text style={styles.recordCatText}>{rec.category.toUpperCase()}</Text>
-                    </View>
-                    <Text style={styles.recordDiff}>{rec.difficulty.toUpperCase()} • {rec.game_mode.toUpperCase()}</Text>
-                    <Text style={styles.recordScore}>⭐ {rec.score} pts</Text>
-                  </View>
-                  <View style={styles.recordMeta}>
-                    <Text style={styles.recordMetaText}>🔥 Max Streak: {rec.max_streak}x</Text>
-                    <Text style={styles.recordMetaText}>🎯 Accuracy: {rec.accuracy_pct}%</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
+          </ScrollView>
         </View>
-      )}
-    </ScrollView>
+
+        {isLoading ? (
+          <ActivityIndicator size="large" color={COLORS.primary} style={{ marginVertical: 40 }} />
+        ) : activeTab === 'SOLO' ? (
+          /* SOLO GAMES LIST */
+          <View style={styles.listContainer}>
+            {soloGames.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Icon name="zap" size={44} color={COLORS.textSecondary} style={{ marginBottom: 12 }} />
+                <Text style={styles.emptyTitle}>NO SOLO GAMES RECORDED</Text>
+                <Text style={styles.emptySubtitle}>
+                  Play a Solo Rush game in {selectedCategory !== 'all' ? selectedCategory.toUpperCase() : 'ANY VIBE'} to see your scores recorded here!
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.gamesList}>
+                {soloGames.map((game, idx) => {
+                  const isUser = game.player_name?.toLowerCase() === defaultPlayerName.toLowerCase();
+                  return (
+                    <View
+                      key={game.id || idx}
+                      style={[
+                        styles.gameCard,
+                        isUser && styles.gameCardUser,
+                      ]}
+                    >
+                      <View style={styles.gameCardLeft}>
+                        <View style={styles.playerTagRow}>
+                          <View style={styles.avatarMiniCircle}>
+                            <Text style={{ fontSize: 13 }}>{game.avatar_emoji || '🎧'}</Text>
+                          </View>
+                          <Text style={[styles.gamePlayerName, isUser && { color: COLORS.secondary }]}>
+                            {game.player_name} {isUser ? '(YOU)' : ''}
+                          </Text>
+                        </View>
+
+                        <Text style={styles.gameGenreTitle}>
+                          {game.category ? game.category.replace('artist:', '🎤 ').toUpperCase() : 'GENERAL VIBES'}
+                        </Text>
+                        <Text style={styles.gameMetaText}>
+                          {(game.difficulty || 'MEDIUM').toUpperCase()} • {formatRecordDate(game.created_at || game.CreatedAt)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.gameCardRight}>
+                        {game.max_streak > 0 && (
+                          <View style={styles.streakBadge}>
+                            <Text style={styles.streakBadgeText}>{game.max_streak}X STREAK</Text>
+                          </View>
+                        )}
+                        <View style={styles.scoreBox}>
+                          <Text style={styles.scoreNumber}>{(game.score || 0).toLocaleString()}</Text>
+                          <Text style={styles.scorePtsText}>PTS</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        ) : (
+          /* MULTIPLAYER MATCHES LIST */
+          <View style={styles.listContainer}>
+            {multiplayerGames.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Icon name="users" size={44} color={COLORS.textSecondary} style={{ marginBottom: 12 }} />
+                <Text style={styles.emptyTitle}>NO MULTIPLAYER MATCHES RECORDED</Text>
+                <Text style={styles.emptySubtitle}>
+                  Play a Pass & Play multiplayer game with friends in {selectedCategory !== 'all' ? selectedCategory.toUpperCase() : 'ANY VIBE'} to view match results here!
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.gamesList}>
+                {multiplayerGames.map((match, idx) => (
+                  <View key={match.id || idx} style={styles.multiplayerMatchCard}>
+                    <View style={styles.mpHeaderRow}>
+                      <View style={styles.winnerPill}>
+                        <Text style={{ fontSize: 14, marginRight: 4 }}>👑</Text>
+                        <Text style={styles.winnerText}>
+                          WINNER: <Text style={{ color: '#FFD700', fontWeight: '900' }}>{match.match_winner || match.player_name}</Text>
+                        </Text>
+                      </View>
+                      <Text style={styles.mpDateText}>{formatRecordDate(match.created_at || match.CreatedAt)}</Text>
+                    </View>
+
+                    <Text style={styles.mpGenreSub}>
+                      {match.category ? match.category.replace('artist:', '🎤 ').toUpperCase() : 'GENERAL VIBES'} • {(match.difficulty || 'MEDIUM').toUpperCase()}
+                    </Text>
+
+                    {/* Breakdown of player scores */}
+                    <View style={styles.breakdownBox}>
+                      <Text style={styles.breakdownText}>
+                        {match.opponents || `Player: ${match.player_name} • Score: ${match.score} PTS`}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+      </ScrollView>
+
+      {/* Sticky Bottom Real-Time High Score & Total Accumulated Points Badge */}
+      <View style={styles.stickyUserRankBar}>
+        <View style={styles.stickyUserInner}>
+          <View style={styles.stickyRankBadge}>
+            <Text style={styles.stickyRankNum}>MAX</Text>
+          </View>
+
+          <View style={styles.stickyUserInfo}>
+            <Text style={styles.stickyUserName}>
+              {defaultPlayerName} • HIGHEST SCORE:{' '}
+              <Text style={{ color: COLORS.secondary }}>
+                {(userStats.highestScore || 0).toLocaleString()} PTS
+              </Text>
+            </Text>
+            <Text style={styles.stickyUserSub}>
+              {(userStats.totalAccumulatedScore || 0).toLocaleString()} TOTAL ACCUMULATED POINTS • {userStats.totalGames} GAMES PLAYED
+            </Text>
+          </View>
+
+          <View style={styles.stickyUserScore}>
+            <Text style={styles.stickyScoreVal}>
+              {(userStats.highestScore || 0).toLocaleString()}
+            </Text>
+            <Text style={styles.stickyPtsLabel}>BEST PTS</Text>
+          </View>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -292,296 +357,332 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  content: {
-    padding: 16,
-    paddingBottom: 40,
-    maxWidth: 550,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: 16,
-    position: 'relative',
-  },
-  backBtn: {
-    position: 'absolute',
-    left: 0,
-    top: 4,
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-  },
-  backBtnText: {
-    color: COLORS.textMuted,
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  title: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  subtitle: {
-    color: COLORS.accentAmber,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 2,
-    marginTop: 2,
-  },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.card,
-    borderRadius: 14,
-    padding: 4,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-  },
-  tabBtn: {
+  scroll: {
     flex: 1,
-    paddingVertical: 10,
+  },
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 150,
+    maxWidth: 900,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  contentDesktop: {
+    paddingHorizontal: 32,
+    paddingTop: 32,
+  },
+  headerSection: {
     alignItems: 'center',
-    borderRadius: 10,
+    marginBottom: 20,
   },
-  tabBtnActive: {
-    backgroundColor: COLORS.cardHover,
-    borderWidth: 1,
-    borderColor: COLORS.accentAmber,
-  },
-  tabText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
+  headerTitle: {
+    color: COLORS.primary,
+    fontSize: 28,
     fontWeight: '900',
     letterSpacing: 0.5,
+    marginBottom: 6,
   },
-  tabTextActive: {
-    color: COLORS.accentAmber,
-  },
-  topActionsRow: {
-    alignItems: 'flex-end',
-    marginBottom: 12,
-  },
-  resetActionBtn: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderWidth: 1,
-    borderColor: COLORS.accentRed,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  resetActionText: {
-    color: COLORS.accentRed,
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  resetConfirmBox: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderWidth: 2,
-    borderColor: COLORS.accentRed,
-    borderRadius: 14,
-    padding: 14,
+  headerSubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    fontWeight: '500',
     marginBottom: 16,
+    textAlign: 'center',
   },
-  resetConfirmTitle: {
-    color: COLORS.text,
-    fontSize: 14,
-    fontWeight: '900',
-    marginBottom: 4,
-  },
-  resetConfirmSub: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    marginBottom: 12,
-  },
-  resetBtnRow: {
+  modeTabsNav: {
     flexDirection: 'row',
-    gap: 10,
-  },
-  confirmResetBtn: {
-    backgroundColor: COLORS.accentRed,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  confirmResetText: {
-    color: '#FFF',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  cancelResetBtn: {
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 9999,
+    padding: 4,
     borderWidth: 1,
-    borderColor: COLORS.cardBorder,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    width: '100%',
+    maxWidth: 420,
+    marginBottom: 14,
   },
-  cancelResetText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  filterScroll: {
-    marginBottom: 16,
-  },
-  filterPill: {
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-    marginRight: 8,
-  },
-  filterPillActive: {
-    borderColor: COLORS.accentAmber,
-    backgroundColor: 'rgba(255, 179, 0, 0.15)',
-  },
-  filterText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  filterTextActive: {
-    color: COLORS.accentAmber,
-  },
-  listContainer: {
-    gap: 8,
-  },
-  entryCard: {
+  modeTabBtn: {
+    flex: 1,
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.card,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: COLORS.cardBorder,
-  },
-  rankBox: {
-    width: 32,
-    alignItems: 'center',
-  },
-  rankEmoji: {
-    fontSize: 16,
-    fontWeight: '900',
-  },
-  avatarBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
+    paddingVertical: 10,
+    borderRadius: 9999,
   },
-  avatarEmoji: {
-    fontSize: 18,
+  modeTabBtnActive: {
+    backgroundColor: 'rgba(192, 193, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 193, 255, 0.3)',
   },
-  playerInfo: {
+  modeTabBtnActiveMulti: {
+    backgroundColor: 'rgba(78, 222, 163, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(78, 222, 163, 0.3)',
+  },
+  modeTabText: {
+    color: COLORS.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  modeTabTextActive: {
+    color: COLORS.primaryLight,
+    fontWeight: '900',
+  },
+  modeTabTextActiveMulti: {
+    color: COLORS.secondary,
+    fontWeight: '900',
+  },
+  categoryScroll: {
+    width: '100%',
+  },
+  categoryChipsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 4,
+  },
+  catChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 9999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  catChipActive: {
+    borderColor: COLORS.secondary,
+    backgroundColor: 'rgba(78, 222, 163, 0.12)',
+  },
+  catChipText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  catChipTextActive: {
+    color: COLORS.secondary,
+    fontWeight: '800',
+  },
+  listContainer: {
+    width: '100%',
+  },
+  gamesList: {
+    gap: 12,
+  },
+  gameCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    padding: 16,
+  },
+  gameCardUser: {
+    borderColor: 'rgba(78, 222, 163, 0.3)',
+    backgroundColor: 'rgba(78, 222, 163, 0.04)',
+  },
+  gameCardLeft: {
     flex: 1,
   },
-  playerName: {
+  playerTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  avatarMiniCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: COLORS.surfaceContainerHigh,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gamePlayerName: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  gameGenreTitle: {
+    color: COLORS.primaryLight,
+    fontSize: 14,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  gameMetaText: {
+    color: COLORS.textSecondary,
+    fontSize: 11,
+  },
+  gameCardRight: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  streakBadge: {
+    backgroundColor: 'rgba(255, 185, 95, 0.15)',
+    borderWidth: 1,
+    borderColor: COLORS.tertiary,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  streakBadgeText: {
+    color: COLORS.tertiary,
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  scoreBox: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 4,
+  },
+  scoreNumber: {
+    color: COLORS.secondary,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  scorePtsText: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  multiplayerMatchCard: {
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    padding: 16,
+  },
+  mpHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  winnerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.4)',
+    borderRadius: 9999,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  winnerText: {
+    color: COLORS.text,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  mpDateText: {
+    color: COLORS.textSecondary,
+    fontSize: 11,
+  },
+  mpGenreSub: {
+    color: COLORS.primaryLight,
+    fontSize: 12,
+    fontWeight: '800',
+    marginBottom: 10,
+  },
+  breakdownBox: {
+    backgroundColor: COLORS.surfaceContainerLow,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  breakdownText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  emptyTitle: {
     color: COLORS.text,
     fontSize: 15,
     fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: 6,
+    textAlign: 'center',
   },
-  metaRow: {
+  emptySubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    textAlign: 'center',
+    maxWidth: 380,
+  },
+  stickyUserRankBar: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 76 : 60,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    zIndex: 90,
+  },
+  stickyUserInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 2,
-    gap: 6,
+    backgroundColor: 'rgba(32, 31, 31, 0.96)',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    maxWidth: 750,
+    alignSelf: 'center',
+    width: '100%',
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    gap: 12,
   },
-  metaBadge: {
-    backgroundColor: COLORS.backgroundSecondary,
-    color: COLORS.textMuted,
-    fontSize: 9,
-    fontWeight: '800',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
+  stickyRankBadge: {
+    backgroundColor: COLORS.primary,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
-  metaStreak: {
-    color: COLORS.accentAmber,
+  stickyRankNum: {
+    color: COLORS.onPrimary,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  stickyUserInfo: {
+    flex: 1,
+  },
+  stickyUserName: {
+    color: COLORS.primaryLight,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  stickyUserSub: {
+    color: COLORS.textSecondary,
     fontSize: 10,
-    fontWeight: '800',
+    marginTop: 2,
   },
-  scoreBox: {
+  stickyUserScore: {
     alignItems: 'flex-end',
   },
-  scoreNumber: {
-    color: COLORS.accentAmber,
-    fontSize: 17,
+  stickyScoreVal: {
+    color: COLORS.secondary,
+    fontSize: 15,
     fontWeight: '900',
   },
-  scoreLabel: {
-    color: COLORS.textMuted,
+  stickyPtsLabel: {
+    color: COLORS.textSecondary,
     fontSize: 8,
     fontWeight: '800',
-  },
-  recordCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-  },
-  recordHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  recordCatBadge: {
-    backgroundColor: 'rgba(255, 87, 34, 0.2)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  recordCatText: {
-    color: COLORS.primary,
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  recordDiff: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  recordScore: {
-    color: COLORS.accentAmber,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  recordMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  recordMetaText: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 40,
-  },
-  emptyEmoji: {
-    fontSize: 40,
-    marginBottom: 10,
-  },
-  emptyText: {
-    color: COLORS.text,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  emptySub: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    marginTop: 4,
-    textAlign: 'center',
   },
 });

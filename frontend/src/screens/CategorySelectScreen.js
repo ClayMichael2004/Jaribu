@@ -38,9 +38,7 @@ export default function CategorySelectScreen({
   initialCategory = 'kenyan',
   initialDifficulty = 'medium',
   initialRounds = 5,
-  initialGameMode = 'solo',
   onStartGame,
-  onStartPassPlaySetup,
   onBack,
   onOpenSettings,
   onSelectTab,
@@ -52,7 +50,6 @@ export default function CategorySelectScreen({
   const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [selectedDifficulty, setSelectedDifficulty] = useState(initialDifficulty);
   const [selectedRounds, setSelectedRounds] = useState(initialRounds);
-  const [selectedGameMode, setSelectedGameMode] = useState(initialGameMode); // 'solo' | 'multiplayer'
   const [activeModeTab, setActiveModeTab] = useState('genres'); // 'genres' | 'artists'
   
   // Artist Spotlight state
@@ -139,13 +136,7 @@ export default function CategorySelectScreen({
       finalCategory = `artist:${artistToUse}`;
     }
 
-    if (selectedGameMode === 'multiplayer' && onStartPassPlaySetup) {
-      onStartPassPlaySetup({
-        category: finalCategory,
-        difficulty: selectedDifficulty,
-        totalRounds: selectedRounds,
-      });
-    } else if (onStartGame) {
+    if (onStartGame) {
       onStartGame({
         category: finalCategory,
         difficulty: selectedDifficulty,
@@ -538,93 +529,18 @@ export default function CategorySelectScreen({
           </View>
         </View>
 
-        {/* Game Mode Selector: SOLO RUSH vs MULTIPLAYER PASS & PLAY */}
-        <View style={styles.gameModeSelectContainer}>
-          <Text style={styles.controlGroupTitle}>SELECT GAME MODE</Text>
-          <View style={styles.gameModeRow}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => {
-                audioManager.playClick();
-                setSelectedGameMode('solo');
-              }}
-              style={[
-                styles.gameModeBtn,
-                selectedGameMode === 'solo' && styles.gameModeBtnActive,
-              ]}
-            >
-              <Icon
-                name="zap"
-                size={14}
-                color={selectedGameMode === 'solo' ? COLORS.primaryLight : COLORS.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.gameModeText,
-                  selectedGameMode === 'solo' && styles.gameModeTextActive,
-                ]}
-              >
-                SOLO RUSH
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => {
-                audioManager.playClick();
-                setSelectedGameMode('multiplayer');
-              }}
-              style={[
-                styles.gameModeBtn,
-                selectedGameMode === 'multiplayer' && styles.gameModeBtnActiveMulti,
-              ]}
-            >
-              <Icon
-                name="users"
-                size={14}
-                color={selectedGameMode === 'multiplayer' ? COLORS.secondary : COLORS.textSecondary}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.gameModeText,
-                  selectedGameMode === 'multiplayer' && styles.gameModeTextActiveMulti,
-                ]}
-              >
-                MULTIPLAYER (PASS & PLAY)
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
         {/* Floating Launch Game Button (Matching Stitch UI) */}
         <View style={styles.launchButtonContainer}>
           <TouchableOpacity
             activeOpacity={0.88}
             onPress={handleLaunch}
-            style={[
-              styles.launchButton,
-              selectedGameMode === 'multiplayer' && styles.launchButtonMultiplayer,
-            ]}
+            style={styles.launchButton}
           >
-            <Icon
-              name={selectedGameMode === 'multiplayer' ? 'users' : 'play'}
-              size={16}
-              color={selectedGameMode === 'multiplayer' ? COLORS.secondary : COLORS.primaryLight}
-              style={{ marginRight: 8 }}
-            />
-            <Text
-              style={[
-                styles.launchButtonText,
-                selectedGameMode === 'multiplayer' && { color: COLORS.secondary },
-              ]}
-            >
-              {selectedGameMode === 'multiplayer'
-                ? `SETUP MULTIPLAYER (${selectedRounds} ROUNDS)`
-                : activeModeTab === 'artists'
+            <Icon name="play" size={16} color={COLORS.primaryLight} style={{ marginRight: 8 }} />
+            <Text style={styles.launchButtonText}>
+              {activeModeTab === 'artists'
                 ? `START SPOTLIGHT: ${selectedArtist?.name || 'WAKADINALI'}`
-                : `START SOLO (${selectedRounds} ROUNDS)`}
+                : `START GAME (${selectedRounds} ROUNDS)`}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1119,56 +1035,6 @@ const styles = StyleSheet.create({
     color: COLORS.primaryLight,
     fontWeight: '900',
   },
-  gameModeSelectContainer: {
-    backgroundColor: COLORS.surfaceContainerLow,
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-    marginBottom: 20,
-  },
-  gameModeRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 8,
-  },
-  gameModeBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.surfaceContainer,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    paddingVertical: 14,
-    paddingHorizontal: 8,
-    ...Platform.select({
-      web: { cursor: 'pointer' },
-    }),
-  },
-  gameModeBtnActive: {
-    borderColor: COLORS.primary,
-    backgroundColor: 'rgba(192, 193, 255, 0.15)',
-  },
-  gameModeBtnActiveMulti: {
-    borderColor: COLORS.secondary,
-    backgroundColor: 'rgba(78, 222, 163, 0.15)',
-  },
-  gameModeText: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  gameModeTextActive: {
-    color: COLORS.primaryLight,
-    fontWeight: '900',
-  },
-  gameModeTextActiveMulti: {
-    color: COLORS.secondary,
-    fontWeight: '900',
-  },
   launchButtonContainer: {
     alignItems: 'center',
     marginTop: 8,
@@ -1191,11 +1057,6 @@ const styles = StyleSheet.create({
     ...Platform.select({
       web: { cursor: 'pointer' },
     }),
-  },
-  launchButtonMultiplayer: {
-    backgroundColor: 'rgba(78, 222, 163, 0.15)',
-    borderColor: COLORS.secondary,
-    shadowColor: COLORS.secondary,
   },
   launchButtonText: {
     color: COLORS.primaryLight,

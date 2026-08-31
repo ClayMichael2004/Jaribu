@@ -1,571 +1,226 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
-  ActivityIndicator,
-  Image,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
-import { COLORS, DIFFICULTIES } from '../constants/theme';
-import { getCategories, searchArtists } from '../config/api';
+import { COLORS, GENRE_METADATA } from '../constants/theme';
 import { audioManager } from '../utils/audio';
-
-const POPULAR_ARTISTS = [
-  { name: 'Wakadinali', flag: '🇰🇪', genre: 'Gengetone / Drill' },
-  { name: 'Sauti Sol', flag: '🇰🇪', genre: 'Afropop' },
-  { name: 'Nyashinski', flag: '🇰🇪', genre: 'Kenyan Hip-Hop' },
-  { name: 'Bien', flag: '🇰🇪', genre: 'Afropop' },
-  { name: 'Burna Boy', flag: '🌍', genre: 'Afrobeats' },
-  { name: 'Wizkid', flag: '🌍', genre: 'Afrobeats' },
-  { name: 'Bob Marley', flag: '🇯🇲', genre: 'Reggae' },
-  { name: 'Chronixx', flag: '🇯🇲', genre: 'Roots Reggae' },
-  { name: 'Vybz Kartel', flag: '🔊', genre: 'Dancehall' },
-  { name: 'Popcaan', flag: '🔊', genre: 'Dancehall' },
-  { name: 'Mercy Chinwo', flag: '🙏', genre: 'Gospel' },
-  { name: 'Sinach', flag: '🙏', genre: 'Gospel Worship' },
-  { name: 'Drake', flag: '🎤', genre: 'Hip-Hop' },
-  { name: 'Kendrick Lamar', flag: '🎤', genre: 'Hip-Hop' },
-  { name: 'The Weeknd', flag: '✨', genre: 'Pop / R&B' },
-  { name: 'Taylor Swift', flag: '✨', genre: 'Pop' },
-];
+import TopHeader from '../components/TopHeader';
+import TurntableVisualizer from '../components/TurntableVisualizer';
+import { Icon } from '../components/Icons';
 
 export default function HomeScreen({
+  playerName = 'DJ Nova',
+  avatarEmoji = '🎧',
+  avatarColor = '#c0c1ff',
   onStartSolo,
+  onOpenCategorySelect,
   onStartPassPlaySetup,
   onOpenLeaderboard,
+  onOpenProfile,
+  onOpenSettings,
+  onSelectTab,
 }) {
-  const [gameMode, setGameMode] = useState('solo'); // 'solo' | 'party'
-  const [categoryTab, setCategoryTab] = useState('genres'); // 'genres' | 'artist_spotlight'
-  const [selectedCategory, setSelectedCategory] = useState('general');
-  const [selectedArtist, setSelectedArtist] = useState(null); // { name, picture, ... }
-  const [artistSearchQuery, setArtistSearchQuery] = useState('');
-  const [artistSearchResults, setArtistSearchResults] = useState([]);
-  const [isSearchingArtist, setIsSearchingArtist] = useState(false);
-  const [selectedDifficulty, setSelectedDifficulty] = useState('medium');
-  const [roundsPreset, setRoundsPreset] = useState(5); // 3, 5, 10, or 'custom'
-  const [customRoundsInput, setCustomRoundsInput] = useState('7');
-  const [playerName, setPlayerName] = useState('Player 1');
-  const [playerEmoji, setPlayerEmoji] = useState('🦁');
-  const [playerColor, setPlayerColor] = useState('#FF4B4B');
-  const [categories, setCategories] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+  const [isPlayingDemo, setIsPlayingDemo] = useState(false);
 
-  const searchTimeoutRef = useRef(null);
-
-  useEffect(() => {
-    loadCategories();
-  }, []);
-
-  const loadCategories = async () => {
-    try {
-      setIsLoading(true);
-      const cats = await getCategories();
-      setCategories(cats);
-    } catch (e) {
-      console.warn('Fallback categories loaded');
-      setCategories([
-        { id: 'general', name: 'Random Mega Mix', subtitle: 'Surprise shuffle across all genres', emoji: '🎲', isSpecial: true },
-        { id: 'kenyan', name: 'Kenyan All-Stars', subtitle: 'Gengetone, Arbantone & Benga', emoji: '🇰🇪', isSpecial: true },
-        { id: 'afrobeats', name: 'Afrobeats & Amapiano', subtitle: 'Burna, Asake, Tyla & Rema', emoji: '🌍' },
-        { id: 'reggae', name: 'Reggae & Roots', subtitle: 'Bob Marley, Chronixx & Lucky Dube', emoji: '🇯🇲' },
-        { id: 'dancehall', name: 'Dancehall & Riddims', subtitle: 'Vybz Kartel, Popcaan & Sean Paul', emoji: '🔊' },
-        { id: 'gospel', name: 'Gospel & Worship', subtitle: 'Mercy Chinwo, Sinach & Kirk Franklin', emoji: '🙏' },
-        { id: 'hiphop', name: 'Hip-Hop & Trap', subtitle: 'Kendrick, Drake, Travis & 2Pac', emoji: '🎤' },
-        { id: 'pop', name: 'Billboard Pop Hits', subtitle: 'The Weeknd, Dua Lipa & Bruno', emoji: '🌟' },
-        { id: 'nineties_twothousands', name: '90s & 2000s Throwbacks', subtitle: 'Usher, Beyonce, Akon & 50 Cent', emoji: '📼' },
-        { id: 'rock_classics', name: 'Rock & Legendary Anthems', subtitle: 'Queen, Nirvana & Linkin Park', emoji: '🎸' },
-      ]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleArtistSearch = (text) => {
-    setArtistSearchQuery(text);
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-
-    if (!text.trim()) {
-      setArtistSearchResults([]);
-      setIsSearchingArtist(false);
-      return;
-    }
-
-    setIsSearchingArtist(true);
-    searchTimeoutRef.current = setTimeout(async () => {
-      try {
-        const res = await searchArtists(text.trim());
-        setArtistSearchResults(res.artists || []);
-      } catch (err) {
-        console.warn('Artist search error:', err);
-      } finally {
-        setIsSearchingArtist(false);
-      }
-    }, 350);
-  };
-
-  const handleSelectArtist = (artist) => {
-    audioManager.unlockAudio();
+  const handlePlaySolo = () => {
     audioManager.playClick();
-    setSelectedArtist(artist);
-    setArtistSearchQuery('');
-    setArtistSearchResults([]);
-  };
-
-  const getEffectiveTotalRounds = () => {
-    if (roundsPreset === 'custom') {
-      const parsed = parseInt(customRoundsInput, 10);
-      if (!isNaN(parsed) && parsed >= 1 && parsed <= 50) {
-        return parsed;
-      }
-      return 7;
+    if (onOpenCategorySelect) {
+      onOpenCategorySelect();
+    } else if (onStartSolo) {
+      onStartSolo({ category: 'kenyan', difficulty: 'medium', totalRounds: 5 });
     }
-    return roundsPreset;
   };
 
-  const handleStartGame = () => {
-    audioManager.unlockAudio();
+  const handleMultiplayer = () => {
     audioManager.playClick();
-
-    let categoryToUse = selectedCategory;
-    if (categoryTab === 'artist_spotlight' && selectedArtist) {
-      categoryToUse = `artist:${selectedArtist.name}`;
+    if (onStartPassPlaySetup) {
+      onStartPassPlaySetup({ category: 'kenyan', difficulty: 'medium', totalRounds: 5 });
     }
+  };
 
-    const rounds = getEffectiveTotalRounds();
-
-    if (gameMode === 'solo') {
-      onStartSolo({
-        category: categoryToUse,
-        difficulty: selectedDifficulty,
-        totalRounds: rounds,
-        playerName: playerName.trim() || 'Player 1',
-        avatarEmoji: playerEmoji,
-        avatarColor: playerColor,
-      });
-    } else {
-      onStartPassPlaySetup({
-        category: categoryToUse,
-        difficulty: selectedDifficulty,
-        totalRounds: rounds,
-      });
+  const handleQuickGenre = (genreId) => {
+    audioManager.playClick();
+    if (onStartSolo) {
+      onStartSolo({ category: genreId, difficulty: 'medium', totalRounds: 5 });
     }
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Top App Header */}
-      <View style={styles.topHeader}>
-        <View style={styles.logoRow}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoEmoji}>🎵</Text>
-          </View>
-          <View>
-            <Text style={styles.appTitle}>Jaribu</Text>
-            <Text style={styles.appSubtitle}>Song Snippet Quiz</Text>
-          </View>
-        </View>
+    <View style={styles.container}>
+      <TopHeader
+        title="JARIBU"
+        showBack={false}
+        rightAction="settings"
+        onRightAction={onOpenSettings}
+        activeTab="HOME"
+        onTabSelect={onSelectTab}
+      />
 
-        <TouchableOpacity
-          style={styles.recordsBtn}
-          onPress={() => {
-            audioManager.unlockAudio();
-            audioManager.playClick();
-            onOpenLeaderboard();
-          }}
-        >
-          <Text style={styles.recordsIcon}>🏆</Text>
-          <Text style={styles.recordsText}>Records</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* SECTION 1: CHOOSE GAME MODE */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>1. CHOOSE GAME MODE</Text>
-        <View style={styles.modeToggleRow}>
-          <TouchableOpacity
-            style={[styles.modeToggleBtn, gameMode === 'solo' && styles.modeToggleBtnActive]}
-            onPress={() => {
-              audioManager.unlockAudio();
-              audioManager.playClick();
-              setGameMode('solo');
-            }}
-          >
-            <Text style={styles.modeBtnEmoji}>⚡</Text>
-            <View style={styles.modeBtnInfo}>
-              <Text style={[styles.modeBtnTitle, gameMode === 'solo' && styles.modeBtnTitleActive]}>
-                Solo Rush
-              </Text>
-              <Text style={styles.modeBtnSub}>Beat the clock & climb rankings</Text>
-            </View>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.modeToggleBtn, gameMode === 'party' && styles.modeToggleBtnActive]}
-            onPress={() => {
-              audioManager.unlockAudio();
-              audioManager.playClick();
-              setGameMode('party');
-            }}
-          >
-            <Text style={styles.modeBtnEmoji}>👥</Text>
-            <View style={styles.modeBtnInfo}>
-              <Text style={[styles.modeBtnTitle, gameMode === 'party' && styles.modeBtnTitleActive]}>
-                Pass & Play
-              </Text>
-              <Text style={styles.modeBtnSub}>Party multiplayer for 2-6 players</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* Solo Player Profile Name */}
-        {gameMode === 'solo' && (
-          <View style={styles.soloProfileBox}>
-            <Text style={styles.soloProfileLabel}>YOUR PLAYER NICKNAME:</Text>
-            <View style={styles.soloInputRow}>
-              <View style={[styles.avatarMini, { backgroundColor: playerColor }]}>
-                <Text style={styles.avatarMiniEmoji}>{playerEmoji}</Text>
-              </View>
-              <TextInput
-                style={styles.soloNameInput}
-                value={playerName}
-                onChangeText={setPlayerName}
-                placeholder="Enter your name..."
-                placeholderTextColor={COLORS.textMuted}
-                maxLength={16}
-              />
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* SECTION 2: CHOOSE CATEGORY OR ARTIST SPOTLIGHT */}
-      <View style={styles.sectionCard}>
-        <View style={styles.sectionTitleRow}>
-          <Text style={styles.sectionTitle}>2. MUSIC SELECTION</Text>
-          {categoryTab === 'artist_spotlight' && selectedArtist && (
-            <View style={styles.specialBadge}>
-              <Text style={styles.specialBadgeText}>🎤 ARTIST MATCH</Text>
-            </View>
-          )}
-        </View>
-
-        {/* Category Mode Switcher Tabs */}
-        <View style={styles.categoryTabBar}>
-          <TouchableOpacity
-            style={[styles.catTabBtn, categoryTab === 'genres' && styles.catTabBtnActive]}
-            onPress={() => {
-              audioManager.unlockAudio();
-              audioManager.playClick();
-              setCategoryTab('genres');
-            }}
-          >
-            <Text style={[styles.catTabText, categoryTab === 'genres' && styles.catTabTextActive]}>
-              🔥 Explore Genres & Mixes
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.catTabBtn, categoryTab === 'artist_spotlight' && styles.catTabBtnActive]}
-            onPress={() => {
-              audioManager.unlockAudio();
-              audioManager.playClick();
-              setCategoryTab('artist_spotlight');
-            }}
-          >
-            <Text style={[styles.catTabText, categoryTab === 'artist_spotlight' && styles.catTabTextActive]}>
-              🎤 Artist Spotlight
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* TAB 1: GENRES & ALL-STAR MIXES */}
-        {categoryTab === 'genres' && (
-          <>
-            {isLoading ? (
-              <ActivityIndicator color={COLORS.primary} size="large" style={{ marginVertical: 18 }} />
-            ) : (
-              <View style={styles.genreList}>
-                {categories.map((cat) => {
-                  const isSelected = selectedCategory === cat.id;
-                  return (
-                    <TouchableOpacity
-                      key={cat.id}
-                      style={[
-                        styles.genreCard,
-                        isSelected && styles.genreCardSelected,
-                        cat.isSpecial && styles.genreCardSpecial,
-                      ]}
-                      onPress={() => {
-                        audioManager.unlockAudio();
-                        audioManager.playClick();
-                        setSelectedCategory(cat.id);
-                      }}
-                    >
-                      <View style={[styles.genreIconWrap, { backgroundColor: cat.color ? `${cat.color}22` : 'rgba(255, 75, 75, 0.12)' }]}>
-                        <Text style={styles.genreEmoji}>{cat.emoji}</Text>
-                      </View>
-                      <View style={styles.genreInfo}>
-                        <View style={styles.genreHeaderRow}>
-                          <Text style={[styles.genreName, isSelected && styles.genreNameSelected]}>
-                            {cat.name}
-                          </Text>
-                          {cat.id === 'general' && (
-                            <View style={styles.allGenreTag}>
-                              <Text style={styles.allGenreTagText}>ALL GENRES</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={styles.genreSub} numberOfLines={1}>
-                          {cat.subtitle}
-                        </Text>
-                      </View>
-                      <View style={[styles.radioCircle, isSelected && styles.radioCircleSelected]}>
-                        {isSelected && <View style={styles.radioDot} />}
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-            )}
-          </>
-        )}
-
-        {/* TAB 2: ARTIST SPOTLIGHT (SEARCH ANY ARTIST) */}
-        {categoryTab === 'artist_spotlight' && (
-          <View style={styles.artistSpotlightBox}>
-            <Text style={styles.artistSpotlightSub}>
-              Search and pick any artist. All game beats will be exclusively by or featuring them!
-            </Text>
-
-            {/* Currently Selected Artist Card */}
-            {selectedArtist ? (
-              <View style={styles.selectedArtistBanner}>
-                {selectedArtist.picture ? (
-                  <Image source={{ uri: selectedArtist.picture }} style={styles.selectedArtistImg} />
-                ) : (
-                  <View style={styles.selectedArtistAvatarFallback}>
-                    <Text style={{ fontSize: 22 }}>🎤</Text>
-                  </View>
-                )}
-                <View style={styles.selectedArtistInfo}>
-                  <Text style={styles.selectedArtistLabel}>READY TO PLAY FOR:</Text>
-                  <Text style={styles.selectedArtistName}>{selectedArtist.name}</Text>
-                  <Text style={styles.selectedArtistMeta}>Solo hits, features & collaborations</Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.changeArtistBtn}
-                  onPress={() => {
-                    audioManager.playClick();
-                    setSelectedArtist(null);
-                  }}
-                >
-                  <Text style={styles.changeArtistBtnText}>✕ CHANGE</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                {/* Search Bar Input */}
-                <View style={styles.searchBarWrap}>
-                  <Text style={styles.searchIcon}>🔍</Text>
-                  <TextInput
-                    style={styles.artistSearchInput}
-                    placeholder="Type artist name (e.g. Wakadinali, Drake, Sinach)..."
-                    placeholderTextColor={COLORS.textMuted}
-                    value={artistSearchQuery}
-                    onChangeText={handleArtistSearch}
-                    autoCapitalize="words"
-                  />
-                  {artistSearchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => handleArtistSearch('')}>
-                      <Text style={styles.clearSearchText}>✕</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {/* Live Search Loading & Results */}
-                {isSearchingArtist && (
-                  <View style={styles.searchLoadingRow}>
-                    <ActivityIndicator size="small" color={COLORS.primary} />
-                    <Text style={styles.searchLoadingText}>Searching artist catalog...</Text>
-                  </View>
-                )}
-
-                {artistSearchResults.length > 0 && (
-                  <View style={styles.searchResultsBox}>
-                    <Text style={styles.searchSectionLabel}>SEARCH RESULTS:</Text>
-                    {artistSearchResults.map((artist) => (
-                      <TouchableOpacity
-                        key={artist.id || artist.name}
-                        style={styles.searchResultItem}
-                        onPress={() => handleSelectArtist(artist)}
-                      >
-                        {artist.picture ? (
-                          <Image source={{ uri: artist.picture }} style={styles.artistResultThumb} />
-                        ) : (
-                          <View style={styles.artistResultThumbFallback}>
-                            <Text style={{ fontSize: 16 }}>🎤</Text>
-                          </View>
-                        )}
-                        <View style={styles.artistResultInfo}>
-                          <Text style={styles.artistResultName}>{artist.name}</Text>
-                          {artist.nb_fans ? (
-                            <Text style={styles.artistResultFans}>{artist.nb_fans.toLocaleString()} Fans</Text>
-                          ) : null}
-                        </View>
-                        <View style={styles.selectArtistBadge}>
-                          <Text style={styles.selectArtistBadgeText}>PLAY ▶</Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
-
-                {/* Quick Select Popular Artists */}
-                <Text style={styles.quickSelectHeader}>OR CHOOSE A POPULAR ARTIST:</Text>
-                <View style={styles.popularGrid}>
-                  {POPULAR_ARTISTS.map((item) => (
-                    <TouchableOpacity
-                      key={item.name}
-                      style={styles.popularArtistChip}
-                      onPress={() => handleSelectArtist({ name: item.name })}
-                    >
-                      <Text style={styles.popularFlag}>{item.flag}</Text>
-                      <View>
-                        <Text style={styles.popularName}>{item.name}</Text>
-                        <Text style={styles.popularGenre}>{item.genre}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </>
-            )}
-          </View>
-        )}
-      </View>
-
-      {/* SECTION 3: DIFFICULTY & CUSTOM ROUNDS */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>3. DIFFICULTY & ROUNDS</Text>
-
-        {/* Difficulty Selector */}
-        <View style={styles.diffSelectorRow}>
-          {DIFFICULTIES.map((diff) => {
-            const isSelected = selectedDifficulty === diff.id;
-            return (
-              <TouchableOpacity
-                key={diff.id}
-                style={[styles.diffBtn, isSelected && styles.diffBtnActive]}
-                onPress={() => {
-                  audioManager.unlockAudio();
-                  audioManager.playClick();
-                  setSelectedDifficulty(diff.id);
-                }}
-              >
-                <Text style={styles.diffEmoji}>{diff.emoji}</Text>
-                <Text style={[styles.diffName, isSelected && styles.diffNameActive]}>
-                  {diff.name}
-                </Text>
-                <Text style={styles.diffSec}>{diff.snippetSec}s snippet</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Rounds Selector with Presets & Custom Input */}
-        <Text style={styles.roundsLabel}>SELECT NUMBER OF ROUNDS:</Text>
-        <View style={styles.roundsRow}>
-          {[3, 5, 10].map((num) => {
-            const isSelected = roundsPreset === num;
-            return (
-              <TouchableOpacity
-                key={num}
-                style={[styles.roundPill, isSelected && styles.roundPillActive]}
-                onPress={() => {
-                  audioManager.unlockAudio();
-                  audioManager.playClick();
-                  setRoundsPreset(num);
-                }}
-              >
-                <Text style={[styles.roundPillText, isSelected && styles.roundPillTextActive]}>
-                  {num} Rounds
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-
-          <TouchableOpacity
-            style={[styles.roundPill, roundsPreset === 'custom' && styles.roundPillActive]}
-            onPress={() => {
-              audioManager.unlockAudio();
-              audioManager.playClick();
-              setRoundsPreset('custom');
-            }}
-          >
-            <Text style={[styles.roundPillText, roundsPreset === 'custom' && styles.roundPillTextActive]}>
-              ✏️ Custom
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Custom Rounds Stepper / Numerical Box */}
-        {roundsPreset === 'custom' && (
-          <View style={styles.customRoundsBox}>
-            <Text style={styles.customRoundsPrompt}>Enter Custom Rounds (1-50):</Text>
-            <View style={styles.stepperRow}>
-              <TouchableOpacity
-                style={styles.stepperBtn}
-                onPress={() => {
-                  audioManager.playClick();
-                  const val = Math.max(1, (parseInt(customRoundsInput, 10) || 1) - 1);
-                  setCustomRoundsInput(val.toString());
-                }}
-              >
-                <Text style={styles.stepperBtnText}>−</Text>
-              </TouchableOpacity>
-
-              <TextInput
-                style={styles.customRoundsInput}
-                keyboardType="number-pad"
-                value={customRoundsInput}
-                onChangeText={(text) => {
-                  const cleaned = text.replace(/[^0-9]/g, '');
-                  setCustomRoundsInput(cleaned);
-                }}
-                maxLength={2}
-              />
-
-              <TouchableOpacity
-                style={styles.stepperBtn}
-                onPress={() => {
-                  audioManager.playClick();
-                  const val = Math.min(50, (parseInt(customRoundsInput, 10) || 1) + 1);
-                  setCustomRoundsInput(val.toString());
-                }}
-              >
-                <Text style={styles.stepperBtnText}>+</Text>
-              </TouchableOpacity>
-              <Text style={styles.roundsUnitText}>Rounds</Text>
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* BIG PRIMARY START BUTTON */}
-      <TouchableOpacity
-        style={styles.mainStartBtn}
-        onPress={handleStartGame}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, isDesktop && styles.contentDesktop]}
+        showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.mainStartBtnText}>
-          {gameMode === 'solo'
-            ? `START SOLO RUSH (${getEffectiveTotalRounds()} ROUNDS) 🚀`
-            : `SETUP PASS & PLAY PARTY (${getEffectiveTotalRounds()} ROUNDS) 👥`}
-        </Text>
-      </TouchableOpacity>
-    </ScrollView>
+        {/* Welcome & Turntable Hero Section (Matching Stitch UI) */}
+        <View style={[styles.heroSection, isDesktop && styles.heroSectionDesktop]}>
+          {/* Left Column: Greeting & Action Buttons */}
+          <View style={[styles.heroLeft, isDesktop && styles.heroLeftDesktop]}>
+            <View style={styles.greetingBox}>
+              <Text style={styles.greetingTitle}>
+                Welcome back,{' '}
+                <Text style={styles.playerNameHighlight}>{playerName}</Text>
+              </Text>
+              <Text style={styles.greetingSubtitle}>Ready for your next session?</Text>
+            </View>
+
+            <View style={[styles.actionsRow, isDesktop && styles.actionsRowDesktop]}>
+              {/* Play Solo Glowing Pill Button */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handlePlaySolo}
+                style={styles.playSoloButton}
+              >
+                <Icon name="play" size={14} color={COLORS.primaryLight} />
+                <Text style={styles.playSoloText}>PLAY SOLO</Text>
+              </TouchableOpacity>
+
+              {/* Multiplayer / Pass & Play Button */}
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleMultiplayer}
+                style={styles.multiplayerButton}
+              >
+                <Icon name="users" size={16} color={COLORS.text} />
+                <Text style={styles.multiplayerText}>MULTIPLAYER</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Right Column: Vinyl Turntable Visualizer Centerpiece */}
+          <View style={styles.heroRight}>
+            <TurntableVisualizer
+              isPlaying={isPlayingDemo}
+              categoryEmoji={avatarEmoji}
+              durationSec={8}
+              size={isDesktop ? 'hero' : 'normal'}
+              onTogglePlay={() => setIsPlayingDemo(!isPlayingDemo)}
+            />
+          </View>
+        </View>
+
+        {/* Bento Grid: Daily Challenge & Current Rank (Matching Stitch UI) */}
+        <View style={[styles.bentoGrid, isDesktop && styles.bentoGridDesktop]}>
+          {/* Card 1: Daily Challenge Card */}
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => handleQuickGenre('afrobeats')}
+            style={[styles.dailyChallengeCard, isDesktop && styles.dailyChallengeCardDesktop]}
+          >
+            <View style={styles.dailyGlowAmbient} />
+            <View style={styles.dailyCardContent}>
+              <View style={styles.dailyCardHeader}>
+                <View>
+                  <View style={styles.dailyBadge}>
+                    <Icon name="flame" size={12} color={COLORS.tertiary} style={{ marginRight: 4 }} />
+                    <Text style={styles.dailyBadgeText}>DAILY CHALLENGE</Text>
+                  </View>
+                  <Text style={styles.dailyTitle}>Afrobeats Mastery</Text>
+                  <Text style={styles.dailySubtitle}>
+                    Identify 10 tracks perfectly to earn double XP.
+                  </Text>
+                </View>
+                <View style={styles.fireBadgeCircle}>
+                  <Icon name="flame" size={24} color={COLORS.tertiary} />
+                </View>
+              </View>
+
+              <View style={styles.dailyProgressContainer}>
+                <View style={styles.dailyProgressLabelRow}>
+                  <Text style={styles.dailyProgressLabel}>Progress</Text>
+                  <Text style={styles.dailyProgressCount}>4/10</Text>
+                </View>
+                <View style={styles.dailyProgressTrack}>
+                  <View style={styles.dailyProgressBar} />
+                </View>
+              </View>
+            </View>
+          </TouchableOpacity>
+
+          {/* Card 2: Current Rank & Stats Overview Card */}
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={onOpenProfile}
+            style={[styles.rankCard, isDesktop && styles.rankCardDesktop]}
+          >
+            <Icon name="award" size={32} color={COLORS.secondary} style={{ marginBottom: 6 }} />
+            <Text style={styles.rankHeaderLabel}>CURRENT RANK</Text>
+            <Text style={styles.rankValue}>Silver III</Text>
+
+            <View style={styles.rankStatsDivider} />
+
+            <View style={styles.rankStatsRow}>
+              <View style={styles.rankStatCol}>
+                <Text style={styles.rankStatLabel}>Win Rate</Text>
+                <Text style={styles.rankStatValue}>68%</Text>
+              </View>
+              <View style={styles.rankStatCol}>
+                <Text style={styles.rankStatLabel}>Streak</Text>
+                <Text style={styles.rankStatValue}>3</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Quick Vibe / Featured Genres Section */}
+        <View style={styles.quickVibeSection}>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={styles.sectionHeadingTitle}>POPULAR VIBES</Text>
+            <TouchableOpacity
+              onPress={() => {
+                audioManager.playClick();
+                if (onOpenCategorySelect) onOpenCategorySelect();
+              }}
+            >
+              <Text style={styles.seeAllText}>VIEW ALL →</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={[styles.quickGenresGrid, isDesktop && styles.quickGenresGridDesktop]}>
+            {['kenyan', 'afrobeats', 'reggae', 'gospel'].map((genreId) => {
+              const meta = GENRE_METADATA[genreId];
+              if (!meta) return null;
+
+              return (
+                <TouchableOpacity
+                  key={genreId}
+                  activeOpacity={0.85}
+                  onPress={() => handleQuickGenre(genreId)}
+                  style={styles.quickGenreCard}
+                >
+                  <View style={styles.quickGenreArt}>
+                    <Text style={styles.quickGenreEmoji}>{meta.icon}</Text>
+                    <View style={styles.quickGenreBadge}>
+                      <Icon name="play" size={8} color={COLORS.primaryLight} style={{ marginRight: 3 }} />
+                      <Text style={styles.quickGenreBadgeText}>{meta.plays}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.quickGenreName}>{meta.shortName}</Text>
+                  <Text style={styles.quickGenreDesc} numberOfLines={1}>{meta.description}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -574,634 +229,373 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
+  scroll: {
+    flex: 1,
+  },
   content: {
-    padding: 16,
-    paddingBottom: 40,
-    maxWidth: 550,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 110,
+    maxWidth: 1200,
     width: '100%',
     alignSelf: 'center',
   },
-  topHeader: {
+  contentDesktop: {
+    paddingHorizontal: 40,
+    paddingTop: 28,
+  },
+  heroSection: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  heroSectionDesktop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
-    paddingVertical: 4,
+    marginBottom: 36,
   },
-  logoRow: {
-    flexDirection: 'row',
+  heroLeft: {
+    width: '100%',
     alignItems: 'center',
+    marginBottom: 16,
   },
-  logoBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: COLORS.primary,
+  heroLeftDesktop: {
+    flex: 1,
+    alignItems: 'flex-start',
+    marginBottom: 0,
+    paddingRight: 24,
+  },
+  heroRight: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
   },
-  logoEmoji: {
-    fontSize: 22,
+  greetingBox: {
+    alignItems: 'center',
+    marginBottom: 16,
   },
-  appTitle: {
+  greetingTitle: {
     color: COLORS.text,
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  playerNameHighlight: {
+    color: COLORS.secondary,
+  },
+  greetingSubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  actionsRow: {
+    flexDirection: 'column',
+    width: '100%',
+    maxWidth: 380,
+    gap: 10,
+  },
+  actionsRowDesktop: {
+    flexDirection: 'row',
+    maxWidth: 420,
+  },
+  playSoloButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(192, 193, 255, 0.12)',
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    borderRadius: 9999,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    gap: 8,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  playSoloText: {
+    color: COLORS.primaryLight,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  multiplayerButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surfaceContainer,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 9999,
+    paddingVertical: 14,
+    paddingHorizontal: 22,
+    gap: 8,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  multiplayerText: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  bentoGrid: {
+    flexDirection: 'column',
+    gap: 14,
+    marginBottom: 28,
+  },
+  bentoGridDesktop: {
+    flexDirection: 'row',
+    gap: 18,
+  },
+  dailyChallengeCard: {
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    padding: 20,
+    position: 'relative',
+    overflow: 'hidden',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  dailyChallengeCardDesktop: {
+    flex: 2,
+  },
+  dailyGlowAmbient: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    width: 140,
+    height: 140,
+    backgroundColor: 'rgba(255, 185, 95, 0.08)',
+    borderRadius: 70,
+  },
+  dailyCardContent: {
+    position: 'relative',
+    zIndex: 2,
+    justifyContent: 'space-between',
+    height: '100%',
+  },
+  dailyCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  dailyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 185, 95, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 185, 95, 0.3)',
+    borderRadius: 9999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginBottom: 8,
+  },
+  dailyBadgeText: {
+    color: COLORS.tertiary,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  dailyTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  dailySubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+  },
+  fireBadgeCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 185, 95, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dailyProgressContainer: {
+    marginTop: 4,
+  },
+  dailyProgressLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  dailyProgressLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  dailyProgressCount: {
+    color: COLORS.tertiary,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  dailyProgressTrack: {
+    height: 6,
+    backgroundColor: COLORS.surfaceDim,
+    borderRadius: 9999,
+    overflow: 'hidden',
+  },
+  dailyProgressBar: {
+    width: '40%',
+    height: '100%',
+    backgroundColor: COLORS.tertiary,
+    borderRadius: 9999,
+    shadowColor: COLORS.tertiary,
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+  },
+  rankCard: {
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  rankCardDesktop: {
+    flex: 1,
+  },
+  rankHeaderLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: 2,
+  },
+  rankValue: {
+    color: COLORS.secondary,
     fontSize: 20,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
-  appSubtitle: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    fontWeight: '700',
+  rankStatsDivider: {
+    width: '100%',
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    marginVertical: 14,
   },
-  recordsBtn: {
+  rankStatsRow: {
     flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-around',
+  },
+  rankStatCol: {
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
   },
-  recordsIcon: {
-    fontSize: 14,
-    marginRight: 6,
-  },
-  recordsText: {
-    color: COLORS.text,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  sectionCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-  },
-  sectionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-    marginBottom: 10,
-  },
-  specialBadge: {
-    backgroundColor: 'rgba(255, 75, 75, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-  },
-  specialBadgeText: {
-    color: COLORS.primary,
+  rankStatLabel: {
+    color: COLORS.textSecondary,
     fontSize: 10,
-    fontWeight: '900',
+    fontWeight: '700',
+    marginBottom: 2,
   },
-  modeToggleRow: {
-    gap: 10,
-  },
-  modeToggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 12,
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
-  },
-  modeToggleBtnActive: {
-    borderColor: COLORS.primary,
-    backgroundColor: 'rgba(255, 75, 75, 0.12)',
-  },
-  modeBtnEmoji: {
-    fontSize: 26,
-    marginRight: 12,
-  },
-  modeBtnInfo: {
-    flex: 1,
-  },
-  modeBtnTitle: {
+  rankStatValue: {
     color: COLORS.text,
     fontSize: 15,
     fontWeight: '900',
-    marginBottom: 2,
   },
-  modeBtnTitleActive: {
-    color: COLORS.primary,
+  quickVibeSection: {
+    marginBottom: 20,
   },
-  modeBtnSub: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-  },
-  soloProfileBox: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.surfaceBorder,
-  },
-  soloProfileLabel: {
-    color: COLORS.textMuted,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  soloInputRow: {
+  sectionHeadingRow: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
+    marginBottom: 14,
   },
-  avatarMini: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  avatarMiniEmoji: {
-    fontSize: 16,
-  },
-  soloNameInput: {
-    flex: 1,
+  sectionHeadingTitle: {
     color: COLORS.text,
-    fontSize: 14,
-    fontWeight: '700',
-    padding: 0,
-  },
-  categoryTabBar: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-  },
-  catTabBtn: {
-    flex: 1,
-    paddingVertical: 9,
-    alignItems: 'center',
-    borderRadius: 9,
-  },
-  catTabBtnActive: {
-    backgroundColor: COLORS.primary,
-    shadowColor: COLORS.primary,
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-  },
-  catTabText: {
-    color: COLORS.textSecondary,
     fontSize: 12,
-    fontWeight: '800',
-  },
-  catTabTextActive: {
-    color: '#FFF',
     fontWeight: '900',
+    letterSpacing: 1.5,
   },
-  genreList: {
-    gap: 8,
-  },
-  genreCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 10,
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
-  },
-  genreCardSelected: {
-    borderColor: COLORS.primary,
-    backgroundColor: 'rgba(255, 75, 75, 0.1)',
-  },
-  genreCardSpecial: {
-    borderLeftWidth: 4,
-    borderLeftColor: COLORS.primary,
-  },
-  genreIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  genreEmoji: {
-    fontSize: 18,
-  },
-  genreInfo: {
-    flex: 1,
-  },
-  genreHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  genreName: {
-    color: COLORS.text,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  genreNameSelected: {
-    color: COLORS.primary,
-  },
-  allGenreTag: {
-    backgroundColor: 'rgba(236, 72, 153, 0.2)',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#EC4899',
-  },
-  allGenreTagText: {
-    color: '#EC4899',
-    fontSize: 8,
-    fontWeight: '900',
-  },
-  genreSub: {
-    color: COLORS.textSecondary,
+  seeAllText: {
+    color: COLORS.primaryLight,
     fontSize: 11,
-    marginTop: 1,
-  },
-  radioCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: COLORS.surfaceBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  radioCircleSelected: {
-    borderColor: COLORS.primary,
-  },
-  radioDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: COLORS.primary,
-  },
-  artistSpotlightBox: {
-    marginTop: 2,
-  },
-  artistSpotlightSub: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    marginBottom: 12,
-  },
-  selectedArtistBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 75, 75, 0.15)',
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 12,
-  },
-  selectedArtistImg: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginRight: 12,
-    borderWidth: 2,
-    borderColor: '#FFF',
-  },
-  selectedArtistAvatarFallback: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: COLORS.surfaceCard,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-  selectedArtistInfo: {
-    flex: 1,
-  },
-  selectedArtistLabel: {
-    color: COLORS.primary,
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  selectedArtistName: {
-    color: COLORS.text,
-    fontSize: 17,
-    fontWeight: '900',
-  },
-  selectedArtistMeta: {
-    color: COLORS.textSecondary,
-    fontSize: 10,
-    marginTop: 2,
-  },
-  changeArtistBtn: {
-    backgroundColor: COLORS.surfaceCard,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-  },
-  changeArtistBtnText: {
-    color: COLORS.textMuted,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  searchBarWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-    marginBottom: 8,
-  },
-  searchIcon: {
-    fontSize: 14,
-    marginRight: 8,
-  },
-  artistSearchInput: {
-    flex: 1,
-    color: COLORS.text,
-    fontSize: 13,
-    fontWeight: '700',
-    padding: 0,
-  },
-  clearSearchText: {
-    color: COLORS.textMuted,
-    fontSize: 14,
-    fontWeight: 'bold',
-    paddingHorizontal: 6,
-  },
-  searchLoadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 10,
-  },
-  searchLoadingText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-  },
-  searchResultsBox: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-    marginBottom: 12,
-    gap: 6,
-  },
-  searchSectionLabel: {
-    color: COLORS.textMuted,
-    fontSize: 10,
     fontWeight: '800',
     letterSpacing: 1,
-    marginBottom: 4,
-    marginLeft: 4,
   },
-  searchResultItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: COLORS.surface,
-  },
-  artistResultThumb: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    marginRight: 10,
-  },
-  artistResultThumbFallback: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: COLORS.surfaceCard,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  artistResultInfo: {
-    flex: 1,
-  },
-  artistResultName: {
-    color: COLORS.text,
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  artistResultFans: {
-    color: COLORS.textMuted,
-    fontSize: 10,
-    marginTop: 1,
-  },
-  selectArtistBadge: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-  },
-  selectArtistBadgeText: {
-    color: '#FFF',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  quickSelectHeader: {
-    color: COLORS.textMuted,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  popularGrid: {
+  quickGenresGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: 12,
   },
-  popularArtistChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surfaceCard,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-    width: '48.5%',
+  quickGenresGridDesktop: {
+    gap: 16,
   },
-  popularFlag: {
-    fontSize: 16,
-    marginRight: 6,
-  },
-  popularName: {
-    color: COLORS.text,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  popularGenre: {
-    color: COLORS.textMuted,
-    fontSize: 9,
-  },
-  diffSelectorRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 12,
-  },
-  diffBtn: {
+  quickGenreCard: {
     flex: 1,
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 6,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
-  },
-  diffBtnActive: {
-    borderColor: COLORS.primary,
-    backgroundColor: 'rgba(255, 75, 75, 0.12)',
-  },
-  diffEmoji: {
-    fontSize: 16,
-    marginBottom: 2,
-  },
-  diffName: {
-    color: COLORS.text,
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  diffNameActive: {
-    color: COLORS.primary,
-  },
-  diffSec: {
-    color: COLORS.textMuted,
-    fontSize: 9,
-    marginTop: 2,
-  },
-  roundsLabel: {
-    color: COLORS.textMuted,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  roundsRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  roundPill: {
-    flex: 1,
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
-  },
-  roundPillActive: {
-    borderColor: COLORS.primary,
-    backgroundColor: 'rgba(255, 75, 75, 0.12)',
-  },
-  roundPillText: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  roundPillTextActive: {
-    color: COLORS.primary,
-    fontWeight: '900',
-  },
-  customRoundsBox: {
-    marginTop: 10,
-    padding: 12,
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-  },
-  customRoundsPrompt: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  stepperBtn: {
-    width: 36,
-    height: 36,
+    minWidth: '45%',
+    backgroundColor: COLORS.surfaceContainer,
     borderRadius: 18,
-    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    padding: 12,
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+      },
+    }),
+  },
+  quickGenreArt: {
+    width: '100%',
+    aspectRatio: 1.3,
+    backgroundColor: COLORS.surfaceContainerHigh,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
+    position: 'relative',
+    marginBottom: 8,
   },
-  stepperBtnText: {
-    color: COLORS.primary,
-    fontSize: 20,
-    fontWeight: '900',
+  quickGenreEmoji: {
+    fontSize: 28,
   },
-  customRoundsInput: {
-    backgroundColor: COLORS.surface,
-    color: COLORS.text,
-    fontSize: 18,
-    fontWeight: '900',
-    textAlign: 'center',
-    width: 55,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
-    padding: 0,
-  },
-  roundsUnitText: {
-    color: COLORS.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  mainStartBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 25,
-    paddingVertical: 16,
+  quickGenreBadge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
-    shadowColor: COLORS.primary,
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
+    backgroundColor: 'rgba(19, 19, 19, 0.85)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
-  mainStartBtnText: {
-    color: '#FFF',
-    fontSize: 15,
+  quickGenreBadgeText: {
+    color: COLORS.primaryLight,
+    fontSize: 9,
     fontWeight: '900',
-    letterSpacing: 1,
+  },
+  quickGenreName: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  quickGenreDesc: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '500',
   },
 });
-

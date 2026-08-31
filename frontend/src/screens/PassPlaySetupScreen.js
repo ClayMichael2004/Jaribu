@@ -1,344 +1,669 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
   TouchableOpacity,
+  TextInput,
+  Image,
+  ActivityIndicator,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
-import { COLORS, AVATAR_EMOJIS, AVATAR_COLORS } from '../constants/theme';
+import { COLORS, DIFFICULTIES, GENRE_METADATA, AVATAR_EMOJIS, AVATAR_COLORS } from '../constants/theme';
+import { getCategories, searchArtists } from '../config/api';
 import { audioManager } from '../utils/audio';
+import { Icon } from '../components/Icons';
 
-const FUN_NICKNAMES = [
-  'BeatsGuru', 'GrooveKing', 'AudioAce', 'SoundMaster',
-  'MelodyQueen', 'VinylBoss', 'TrackTitan', 'RhythmPro',
-  'BassHero', 'MicDrop', 'HitMaker', 'ChartTopper',
-  'DJ Star', 'VibeSeeker', 'SongSniper', 'Harmonizer',
+const POPULAR_ARTISTS = [
+  { name: 'Wakadinali', genre: 'Gengetone / Drill', color: '#4edea3' },
+  { name: 'Sauti Sol', genre: 'Afropop', color: '#ffb95f' },
+  { name: 'Nyashinski', genre: 'Kenyan Hip-Hop', color: '#c0c1ff' },
+  { name: 'Bien', genre: 'Afropop', color: '#70d6ff' },
+  { name: 'Burna Boy', genre: 'Afrobeats', color: '#ffb95f' },
+  { name: 'Wizkid', genre: 'Afrobeats', color: '#e1dfff' },
+  { name: 'Bob Marley', genre: 'Reggae', color: '#4edea3' },
+  { name: 'Chronixx', genre: 'Roots Reggae', color: '#ffb95f' },
+  { name: 'Vybz Kartel', genre: 'Dancehall', color: '#6ffbbe' },
+  { name: 'Mercy Chinwo', genre: 'Gospel', color: '#70d6ff' },
+  { name: 'Drake', genre: 'Hip-Hop', color: '#ff5449' },
+  { name: 'The Weeknd', genre: 'Pop / R&B', color: '#ff70a6' },
 ];
 
+const PRESET_ROUNDS = [2, 3, 5, 10, 15, 20];
+
 export default function PassPlaySetupScreen({
-  category = 'kenyan',
-  difficulty = 'medium',
-  totalRounds = 5,
+  initialCategory = 'kenyan',
+  initialDifficulty = 'medium',
+  initialRounds = 3,
+  playerName = 'Clay',
+  avatarEmoji = '🎧',
+  avatarColor = '#c0c1ff',
   onStartGame,
   onBack,
 }) {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+
+  // Categories & Search
+  const [categories, setCategories] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState(initialCategory);
+  const [selectedDifficulty, setSelectedDifficulty] = useState(initialDifficulty);
+  const [roundsPerPlayer, setRoundsPerPlayer] = useState(initialRounds);
+  const [activeModeTab, setActiveModeTab] = useState('genres'); // 'genres' | 'artists'
+
+  // Artist Spotlight
+  const [selectedArtist, setSelectedArtist] = useState({ name: 'Wakadinali', genre: 'Gengetone' });
+  const [artistQuery, setArtistQuery] = useState('');
+  const [artistResults, setArtistResults] = useState([]);
+  const [isSearchingArtist, setIsSearchingArtist] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const searchTimerRef = useRef(null);
+
+  // Players State (Defaults Player 1 to user's saved profile name)
   const [players, setPlayers] = useState([
-    { id: 'p1', name: 'Player 1', avatarEmoji: '🦁', avatarColor: '#FF4B4B' },
-    { id: 'p2', name: 'Player 2', avatarEmoji: '⚡', avatarColor: '#00E5FF' },
+    {
+      id: 'p1',
+      name: playerName || 'Clay',
+      avatarEmoji: avatarEmoji || '🎧',
+      avatarColor: avatarColor || '#c0c1ff',
+      isHost: true,
+    },
+    {
+      id: 'p2',
+      name: 'Player 2',
+      avatarEmoji: '⚡',
+      avatarColor: '#ffb95f',
+      isHost: false,
+    },
   ]);
-  const [roundsPreset, setRoundsPreset] = useState(3); // 2, 3, 5, or 'custom'
-  const [customRoundsInput, setCustomRoundsInput] = useState('4');
-  const [editingIndex, setEditingIndex] = useState(null);
+
+  useEffect(() => {
+    loadCategoryData();
+  }, []);
+
+  // Sync Player 1 if profile prop updates
+  useEffect(() => {
+    setPlayers((prev) => {
+      const updated = [...prev];
+      if (updated[0]) {
+        updated[0] = {
+          ...updated[0],
+          name: playerName || updated[0].name || 'Clay',
+          avatarEmoji: avatarEmoji || updated[0].avatarEmoji || '🎧',
+          avatarColor: avatarColor || updated[0].avatarColor || '#c0c1ff',
+        };
+      }
+      return updated;
+    });
+  }, [playerName, avatarEmoji, avatarColor]);
+
+  const loadCategoryData = async () => {
+    try {
+      setIsLoading(true);
+      const data = await getCategories();
+      const list = data.categories || [];
+      if (list.length > 0) {
+        setCategories(list);
+      } else {
+        const fallbacks = Object.keys(GENRE_METADATA).map((k) => ({
+          id: k,
+          name: GENRE_METADATA[k].name,
+          subtitle: GENRE_METADATA[k].subtitle,
+          sample_artists: GENRE_METADATA[k].sampleArtists,
+          color: GENRE_METADATA[k].color,
+        }));
+        setCategories(fallbacks);
+      }
+    } catch (e) {
+      console.warn('Failed to load categories for multiplayer setup:', e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleArtistSearch = (text) => {
+    setArtistQuery(text);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (!text || text.trim().length < 2) {
+      setArtistResults([]);
+      setIsSearchingArtist(false);
+      return;
+    }
+    setIsSearchingArtist(true);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await searchArtists(text.trim());
+        setArtistResults(res.artists || []);
+      } catch (err) {
+        setArtistResults([]);
+      } finally {
+        setIsSearchingArtist(false);
+      }
+    }, 300);
+  };
+
+  const handleIncrementRounds = () => {
+    audioManager.playClick();
+    setRoundsPerPlayer((prev) => Math.min(50, prev + 1));
+  };
+
+  const handleDecrementRounds = () => {
+    audioManager.playClick();
+    setRoundsPerPlayer((prev) => Math.max(1, prev - 1));
+  };
 
   const addPlayer = () => {
-    if (players.length >= 6) return;
+    if (players.length >= 8) return;
     audioManager.playClick();
-    const nextIdx = players.length + 1;
-    const emoji = AVATAR_EMOJIS[(nextIdx - 1) % AVATAR_EMOJIS.length];
-    const color = AVATAR_COLORS[(nextIdx - 1) % AVATAR_COLORS.length];
+    const nextNum = players.length + 1;
+    const defaultColor = AVATAR_COLORS[(nextNum - 1) % AVATAR_COLORS.length];
+    const defaultEmoji = AVATAR_EMOJIS[(nextNum - 1) % AVATAR_EMOJIS.length];
+
     setPlayers([
       ...players,
       {
-        id: `p_${Date.now()}_${nextIdx}`,
-        name: `Player ${nextIdx}`,
-        avatarEmoji: emoji,
-        avatarColor: color,
+        id: Date.now().toString(),
+        name: `Player ${nextNum}`,
+        avatarEmoji: defaultEmoji,
+        avatarColor: defaultColor,
+        isHost: false,
       },
     ]);
   };
 
-  const removePlayer = (idx) => {
+  const removePlayer = (index) => {
     if (players.length <= 2) return;
     audioManager.playClick();
-    const updated = players.filter((_, i) => i !== idx);
-    setPlayers(updated);
-    if (editingIndex === idx) setEditingIndex(null);
+    setPlayers(players.filter((_, i) => i !== index));
   };
 
-  const updatePlayerName = (text, idx) => {
-    const updated = [...players];
-    updated[idx].name = text;
-    setPlayers(updated);
-  };
-
-  const assignRandomNickname = (idx) => {
-    audioManager.playClick();
-    const randomName = FUN_NICKNAMES[Math.floor(Math.random() * FUN_NICKNAMES.length)];
-    const updated = [...players];
-    updated[idx].name = randomName;
-    setPlayers(updated);
-  };
-
-  const updatePlayerAvatar = (emoji, color, idx) => {
-    audioManager.playClick();
-    const updated = [...players];
-    if (emoji) updated[idx].avatarEmoji = emoji;
-    if (color) updated[idx].avatarColor = color;
-    setPlayers(updated);
-  };
-
-  const getEffectiveRoundsPerPlayer = () => {
-    if (roundsPreset === 'custom') {
-      const parsed = parseInt(customRoundsInput, 10);
-      if (!isNaN(parsed) && parsed >= 1 && parsed <= 20) {
-        return parsed;
-      }
-      return 4;
-    }
-    return roundsPreset;
-  };
-
-  const handleStart = () => {
-    audioManager.playClick();
-    const effectiveRounds = getEffectiveRoundsPerPlayer();
-
-    // Ensure all players have non-empty names
-    const sanitizedPlayers = players.map((p, i) => ({
-      ...p,
-      name: p.name.trim() || `Player ${i + 1}`,
-    }));
-
-    onStartGame({
-      players: sanitizedPlayers,
-      category,
-      difficulty,
-      roundsPerPlayer: effectiveRounds,
+  const updatePlayerName = (index, newName) => {
+    setPlayers((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], name: newName };
+      return copy;
     });
   };
 
-  const effectiveRounds = getEffectiveRoundsPerPlayer();
-  const totalTurns = players.length * effectiveRounds;
+  const updatePlayerEmoji = (index, emoji) => {
+    audioManager.playClick();
+    setPlayers((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], avatarEmoji: emoji };
+      return copy;
+    });
+  };
+
+  const updatePlayerColor = (index, color) => {
+    audioManager.playClick();
+    setPlayers((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], avatarColor: color };
+      return copy;
+    });
+  };
+
+  const handleStartMatch = () => {
+    audioManager.playClick();
+    let finalCategory = selectedCategory;
+    if (activeModeTab === 'artists') {
+      const artistToUse = selectedArtist?.name || artistQuery.trim() || 'Wakadinali';
+      finalCategory = `artist:${artistToUse}`;
+    }
+
+    if (onStartGame) {
+      onStartGame({
+        players,
+        category: finalCategory,
+        difficulty: selectedDifficulty,
+        roundsPerPlayer,
+      });
+    }
+  };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={onBack}>
-          <Text style={styles.backBtnText}>← BACK</Text>
+    <View style={styles.container}>
+      {/* Top Header */}
+      <View style={styles.topHeader}>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={onBack}
+          style={styles.backBtn}
+        >
+          <Icon name="arrow-left" size={18} color={COLORS.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>PARTY LOBBY 👥</Text>
-        <Text style={styles.subtitle}>
-          PASS & PLAY • {category.replace('artist:', 'ARTIST: ').toUpperCase()}
-        </Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>PASS & PLAY MULTIPLAYER</Text>
+          <Text style={styles.headerSubtitle}>
+            {players.length} Players • {roundsPerPlayer} Rounds/Player • {players.length * roundsPerPlayer} Total Turns
+          </Text>
+        </View>
+        <View style={{ width: 40 }} />
       </View>
 
-      {/* Players List with Custom Names */}
-      <View style={styles.section}>
-        <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>
-            PLAYERS & CUSTOM NAMES ({players.length}/6)
-          </Text>
-          {players.length < 6 && (
-            <TouchableOpacity style={styles.addPlayerBtn} onPress={addPlayer}>
-              <Text style={styles.addPlayerText}>+ ADD PLAYER</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-        <Text style={styles.sectionInstruction}>
-          Type any custom name for your players or tap 🎲 for a random nickname:
-        </Text>
-
-        <View style={styles.playerGrid}>
-          {players.map((p, idx) => {
-            const isEditing = editingIndex === idx;
-            return (
-              <View
-                key={p.id || idx}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, isDesktop && styles.contentDesktop]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Mode Switcher Tabs: BROWSE GENRES vs ARTIST SPOTLIGHT */}
+        <View style={styles.modeTabsWrapper}>
+          <View style={styles.modeTabsContainer}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                audioManager.playClick();
+                setActiveModeTab('genres');
+              }}
+              style={[
+                styles.modeTab,
+                activeModeTab === 'genres' && styles.modeTabActive,
+              ]}
+            >
+              <Icon
+                name="disc"
+                size={14}
+                color={activeModeTab === 'genres' ? COLORS.primaryLight : COLORS.textSecondary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
                 style={[
-                  styles.playerCard,
-                  { borderColor: p.avatarColor || COLORS.primary },
+                  styles.modeTabText,
+                  activeModeTab === 'genres' && styles.modeTabTextActive,
                 ]}
               >
-                <View style={styles.playerCardTop}>
-                  {/* Avatar Icon */}
+                BROWSE GENRES
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                audioManager.playClick();
+                setActiveModeTab('artists');
+              }}
+              style={[
+                styles.modeTab,
+                activeModeTab === 'artists' && styles.modeTabActive,
+              ]}
+            >
+              <Icon
+                name="mic"
+                size={14}
+                color={activeModeTab === 'artists' ? COLORS.secondary : COLORS.textSecondary}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.modeTabText,
+                  activeModeTab === 'artists' && styles.modeTabTextActiveSecondary,
+                ]}
+              >
+                ARTIST SPOTLIGHT
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Tab 1: Browse Genres Grid */}
+        {activeModeTab === 'genres' && (
+          <View style={styles.genresSection}>
+            <Text style={styles.subHeading}>SELECT MULTIPLAYER VIBE</Text>
+            {isLoading ? (
+              <ActivityIndicator size="large" color={COLORS.primary} style={{ marginVertical: 30 }} />
+            ) : (
+              <View style={[styles.genreGrid, isDesktop && styles.genreGridDesktop]}>
+                {categories.map((cat) => {
+                  const isSelected = selectedCategory === cat.id;
+                  const meta = GENRE_METADATA[cat.id] || {
+                    plays: '1.2M',
+                    accent: COLORS.primary,
+                    themeColor: COLORS.primary,
+                    bgGradient: 'rgba(32, 31, 31, 0.6)',
+                    iconName: 'music',
+                    description: cat.subtitle,
+                  };
+
+                  return (
+                    <TouchableOpacity
+                      key={cat.id}
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        audioManager.playClick();
+                        setSelectedCategory(cat.id);
+                      }}
+                      style={[
+                        styles.categoryCard,
+                        { borderColor: isSelected ? meta.themeColor : 'rgba(255, 255, 255, 0.08)' },
+                        isSelected && {
+                          backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                          shadowColor: meta.themeColor,
+                          shadowOffset: { width: 0, height: 0 },
+                          shadowOpacity: 0.35,
+                          shadowRadius: 16,
+                          transform: [{ scale: 1.02 }],
+                        },
+                      ]}
+                    >
+                      {/* Luxury Visual Art Box (No dumb emojis - sleek vinyl tile) */}
+                      <View
+                        style={[
+                          styles.categoryArtBox,
+                          { backgroundColor: meta.bgGradient },
+                        ]}
+                      >
+                        {/* Concentric subtle groove */}
+                        <View style={[styles.artGrooveOuter, { borderColor: `${meta.themeColor}33` }]}>
+                          <View style={[styles.artGrooveCenter, { backgroundColor: `${meta.themeColor}22` }]}>
+                            <Icon name={meta.iconName || 'disc'} size={28} color={meta.themeColor} />
+                          </View>
+                        </View>
+
+                        {/* Top Right Tag */}
+                        {meta.tag && (
+                          <View style={[styles.genreTagPill, { backgroundColor: `${meta.themeColor}25`, borderColor: `${meta.themeColor}55` }]}>
+                            <Text style={[styles.genreTagText, { color: meta.themeColor }]}>{meta.tag}</Text>
+                          </View>
+                        )}
+                        
+                        {/* Play Count Badge */}
+                        <View style={styles.playBadge}>
+                          <Icon name="play" size={8} color={COLORS.text} style={{ marginRight: 4 }} />
+                          <Text style={styles.playBadgeText}>{meta.plays}</Text>
+                        </View>
+                      </View>
+
+                      {/* Title & Info */}
+                      <View style={styles.categoryInfo}>
+                        <Text
+                          style={[
+                            styles.categoryName,
+                            isSelected && { color: meta.themeColor },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {cat.name}
+                        </Text>
+                        <Text style={styles.categorySub} numberOfLines={1}>
+                          {cat.subtitle || meta.description || 'Top Hits'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Tab 2: Artist Spotlight Search */}
+        {activeModeTab === 'artists' && (
+          <View style={styles.artistSection}>
+            <Text style={styles.subHeading}>SEARCH SPOTLIGHT ARTIST</Text>
+            <View style={styles.searchBarWrapper}>
+              <Icon name="search" size={18} color={COLORS.textSecondary} style={{ marginLeft: 14 }} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Type artist name (e.g. Wakadinali, Burna Boy, Sauti Sol)..."
+                placeholderTextColor={COLORS.textMuted}
+                value={artistQuery}
+                onChangeText={handleArtistSearch}
+              />
+              {isSearchingArtist && <ActivityIndicator size="small" color={COLORS.primary} style={{ marginRight: 14 }} />}
+            </View>
+
+            {selectedArtist && (
+              <View style={styles.selectedArtistBanner}>
+                <View style={styles.selectedArtistLeft}>
+                  {selectedArtist.picture ? (
+                    <Image source={{ uri: selectedArtist.picture }} style={styles.artistAvatarImage} />
+                  ) : (
+                    <View style={styles.artistAvatarCircle}>
+                      <Icon name="mic" size={20} color={COLORS.secondary} />
+                    </View>
+                  )}
+                  <View>
+                    <Text style={styles.selectedArtistName}>{selectedArtist.name}</Text>
+                    <Text style={styles.selectedArtistTag}>Spotlight Battle Artist</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {artistResults.length > 0 && (
+              <View style={styles.artistResultsList}>
+                <Text style={styles.subHeading}>SEARCH CANDIDATES</Text>
+                {artistResults.map((artist) => (
                   <TouchableOpacity
-                    style={[styles.avatarBox, { backgroundColor: p.avatarColor || COLORS.primary }]}
+                    key={artist.id || artist.name}
                     onPress={() => {
                       audioManager.playClick();
-                      setEditingIndex(isEditing ? null : idx);
+                      setSelectedArtist(artist);
                     }}
+                    style={[
+                      styles.artistResultItem,
+                      selectedArtist?.name === artist.name && styles.artistResultItemActive,
+                    ]}
                   >
-                    <Text style={styles.avatarEmoji}>{p.avatarEmoji || '🦁'}</Text>
-                    <View style={styles.avatarEditBadge}>
-                      <Text style={styles.avatarEditBadgeText}>✏️</Text>
-                    </View>
+                    <Text style={styles.artistResultName}>{artist.name}</Text>
                   </TouchableOpacity>
-
-                  {/* Player Name Input Field */}
-                  <View style={styles.nameInputContainer}>
-                    <View style={styles.nameInputRow}>
-                      <TextInput
-                        style={styles.nameInput}
-                        value={p.name}
-                        onChangeText={(text) => updatePlayerName(text, idx)}
-                        placeholder={`Player ${idx + 1} Name`}
-                        placeholderTextColor={COLORS.textMuted}
-                        maxLength={18}
-                      />
-                      <TouchableOpacity
-                        style={styles.randomNameBtn}
-                        onPress={() => assignRandomNickname(idx)}
-                        title="Random Name"
-                      >
-                        <Text style={styles.randomNameEmoji}>🎲</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <Text style={styles.turnOrderText}>
-                      Turn #{idx + 1} • {p.name ? `"${p.name}"` : `Player ${idx + 1}`}
-                    </Text>
-                  </View>
-
-                  {players.length > 2 && (
-                    <TouchableOpacity
-                      style={styles.removeBtn}
-                      onPress={() => removePlayer(idx)}
-                    >
-                      <Text style={styles.removeBtnText}>✕</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {/* Avatar & Color Customization Drawer */}
-                {isEditing && (
-                  <View style={styles.avatarPickerDrawer}>
-                    <Text style={styles.pickerLabel}>Choose Avatar Emoji & Theme Color:</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pickerScroll}>
-                      {AVATAR_EMOJIS.map((emoji) => (
-                        <TouchableOpacity
-                          key={emoji}
-                          style={styles.emojiChoice}
-                          onPress={() => updatePlayerAvatar(emoji, null, idx)}
-                        >
-                          <Text style={styles.emojiChoiceText}>{emoji}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-
-                    <View style={styles.colorRow}>
-                      {AVATAR_COLORS.map((c) => (
-                        <TouchableOpacity
-                          key={c}
-                          style={[
-                            styles.colorChoice,
-                            { backgroundColor: c },
-                            p.avatarColor === c && styles.colorChoiceActive,
-                          ]}
-                          onPress={() => updatePlayerAvatar(null, c, idx)}
-                        />
-                      ))}
-                    </View>
-                  </View>
-                )}
+                ))}
               </View>
-            );
-          })}
-        </View>
-      </View>
+            )}
 
-      {/* Rounds per player with Custom Input */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>ROUNDS PER PLAYER</Text>
-        <View style={styles.roundsRow}>
-          {[2, 3, 5].map((num) => {
-            const isSelected = roundsPreset === num;
-            return (
+            <Text style={[styles.subHeading, { marginTop: 16 }]}>TRENDING ARTISTS</Text>
+            <View style={styles.artistChipsRow}>
+              {POPULAR_ARTISTS.map((artist) => {
+                const isSelected = selectedArtist?.name === artist.name;
+                return (
+                  <TouchableOpacity
+                    key={artist.name}
+                    onPress={() => {
+                      audioManager.playClick();
+                      setSelectedArtist(artist);
+                    }}
+                    style={[styles.artistChip, isSelected && styles.artistChipActive]}
+                  >
+                    <Text style={[styles.artistChipName, isSelected && styles.artistChipNameActive]}>
+                      {artist.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {/* Controls Section: Difficulty & Number of Rounds Stepper */}
+        <View style={styles.controlsSection}>
+          {/* Difficulty Selector */}
+          <View style={styles.controlGroup}>
+            <Text style={styles.controlGroupTitle}>SELECT DIFFICULTY</Text>
+            <View style={styles.difficultyRow}>
+              {DIFFICULTIES.map((diff) => {
+                const isSelected = selectedDifficulty === diff.id;
+                return (
+                  <TouchableOpacity
+                    key={diff.id}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      audioManager.playClick();
+                      setSelectedDifficulty(diff.id);
+                    }}
+                    style={[
+                      styles.diffCard,
+                      isSelected && { borderColor: diff.color, backgroundColor: 'rgba(255, 255, 255, 0.05)' },
+                    ]}
+                  >
+                    <Icon name={diff.iconName || 'disc'} size={20} color={diff.color} style={{ marginBottom: 6 }} />
+                    <Text style={[styles.diffName, isSelected && { color: diff.color }]}>{diff.name}</Text>
+                    <Text style={styles.diffSnippet}>{diff.snippetSec}s snippet</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* Number of Rounds Stepper + Presets */}
+          <View style={styles.controlGroup}>
+            <View style={styles.roundsHeaderRow}>
+              <Text style={styles.controlGroupTitle}>NUMBER OF ROUNDS PER PLAYER</Text>
+              <Text style={styles.customRoundsCountBadge}>
+                {roundsPerPlayer} {roundsPerPlayer === 1 ? 'ROUND' : 'ROUNDS'} / PLAYER
+              </Text>
+            </View>
+
+            <View style={styles.stepperContainer}>
               <TouchableOpacity
-                key={num}
-                style={[styles.roundChoiceBtn, isSelected && styles.roundChoiceSelected]}
-                onPress={() => {
-                  audioManager.playClick();
-                  setRoundsPreset(num);
-                }}
-              >
-                <Text style={[styles.roundChoiceText, isSelected && styles.roundChoiceTextSelected]}>
-                  {num} Rounds each
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-
-          <TouchableOpacity
-            style={[styles.roundChoiceBtn, roundsPreset === 'custom' && styles.roundChoiceSelected]}
-            onPress={() => {
-              audioManager.unlockAudio();
-              audioManager.playClick();
-              setRoundsPreset('custom');
-            }}
-          >
-            <Text style={[styles.roundChoiceText, roundsPreset === 'custom' && styles.roundChoiceTextSelected]}>
-              ✏️ Custom
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Custom Rounds Stepper */}
-        {roundsPreset === 'custom' && (
-          <View style={styles.customRoundsBox}>
-            <Text style={styles.customRoundsPrompt}>Enter Rounds per Player (1-20):</Text>
-            <View style={styles.stepperRow}>
-              <TouchableOpacity
-                style={styles.stepperBtn}
-                onPress={() => {
-                  audioManager.playClick();
-                  const val = Math.max(1, (parseInt(customRoundsInput, 10) || 1) - 1);
-                  setCustomRoundsInput(val.toString());
-                }}
+                activeOpacity={0.75}
+                onPress={handleDecrementRounds}
+                style={styles.stepperButton}
               >
                 <Text style={styles.stepperBtnText}>−</Text>
               </TouchableOpacity>
 
-              <TextInput
-                style={styles.customRoundsInput}
-                keyboardType="number-pad"
-                value={customRoundsInput}
-                onChangeText={(text) => {
-                  const cleaned = text.replace(/[^0-9]/g, '');
-                  setCustomRoundsInput(cleaned);
-                }}
-                maxLength={2}
-              />
+              <View style={styles.stepperDisplay}>
+                <Text style={styles.stepperNumberText}>{roundsPerPlayer}</Text>
+                <Text style={styles.stepperLabelText}>
+                  {players.length * roundsPerPlayer} TOTAL TURNS
+                </Text>
+              </View>
 
               <TouchableOpacity
-                style={styles.stepperBtn}
-                onPress={() => {
-                  audioManager.playClick();
-                  const val = Math.min(20, (parseInt(customRoundsInput, 10) || 1) + 1);
-                  setCustomRoundsInput(val.toString());
-                }}
+                activeOpacity={0.75}
+                onPress={handleIncrementRounds}
+                style={styles.stepperButton}
               >
                 <Text style={styles.stepperBtnText}>+</Text>
               </TouchableOpacity>
-              <Text style={styles.roundsUnitText}>Rounds each</Text>
+            </View>
+
+            <View style={styles.roundsRow}>
+              {PRESET_ROUNDS.map((r) => {
+                const isActive = roundsPerPlayer === r;
+                return (
+                  <TouchableOpacity
+                    key={r}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      audioManager.playClick();
+                      setRoundsPerPlayer(r);
+                    }}
+                    style={[styles.roundPill, isActive && styles.roundPillActive]}
+                  >
+                    <Text style={[styles.roundText, isActive && styles.roundTextActive]}>{r}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
-        )}
-      </View>
-
-      {/* Match Summary Box */}
-      <View style={styles.summaryCard}>
-        <Text style={styles.summaryTitle}>MATCH OVERVIEW</Text>
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>Total Match Turns:</Text>
-          <Text style={styles.summaryVal}>
-            {totalTurns} Turns ({players.length} Players × {effectiveRounds} Rounds)
-          </Text>
         </View>
-        <View style={styles.summaryRow}>
-          <Text style={styles.summaryLabel}>Turn Order:</Text>
-          <Text style={styles.summaryVal} numberOfLines={1}>
-            {players.map((p) => p.name || 'Player').join(' → ')}
-          </Text>
-        </View>
-      </View>
 
-      {/* Start Button */}
-      <TouchableOpacity style={styles.startPartyBtn} onPress={handleStart}>
-        <Text style={styles.startPartyText}>START PARTY MATCH ({totalTurns} TURNS) 🚀</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        {/* Players In Match Section */}
+        <View style={styles.playersSection}>
+          <View style={styles.playersSectionHeader}>
+            <Text style={styles.controlGroupTitle}>PLAYERS IN MATCH ({players.length}/8)</Text>
+            {players.length < 8 && (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={addPlayer}
+                style={styles.addPlayerMiniBtn}
+              >
+                <Icon name="plus" size={12} color={COLORS.secondary} style={{ marginRight: 4 }} />
+                <Text style={styles.addPlayerMiniText}>ADD PLAYER</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.playersList}>
+            {players.map((player, index) => (
+              <View key={player.id || index} style={styles.playerCard}>
+                <View style={styles.playerCardTop}>
+                  <View style={[styles.playerAvatarCircle, { borderColor: player.avatarColor }]}>
+                    <Text style={styles.playerAvatarEmoji}>{player.avatarEmoji}</Text>
+                  </View>
+
+                  <View style={styles.playerInputWrapper}>
+                    <Text style={styles.playerLabel}>
+                      {player.isHost ? 'HOST / PLAYER 1' : `PLAYER ${index + 1}`}
+                    </Text>
+                    <TextInput
+                      style={styles.playerNameInput}
+                      value={player.name}
+                      onChangeText={(val) => updatePlayerName(index, val)}
+                      placeholder={`Player ${index + 1}`}
+                      placeholderTextColor={COLORS.textMuted}
+                      maxLength={18}
+                    />
+                  </View>
+
+                  {players.length > 2 && !player.isHost && (
+                    <TouchableOpacity
+                      onPress={() => removePlayer(index)}
+                      style={styles.removePlayerBtn}
+                    >
+                      <Icon name="trash" size={14} color={COLORS.error} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Emoji Selector */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.emojiPickerScroll}>
+                  <View style={styles.emojiPickerRow}>
+                    {AVATAR_EMOJIS.map((emoji) => {
+                      const isEmojiActive = player.avatarEmoji === emoji;
+                      return (
+                        <TouchableOpacity
+                          key={emoji}
+                          onPress={() => updatePlayerEmoji(index, emoji)}
+                          style={[styles.emojiPill, isEmojiActive && styles.emojiPillActive]}
+                        >
+                          <Text style={{ fontSize: 14 }}>{emoji}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </ScrollView>
+
+                {/* Color Swatches */}
+                <View style={styles.colorSwatchesRow}>
+                  {AVATAR_COLORS.map((color) => {
+                    const isColorActive = player.avatarColor === color;
+                    return (
+                      <TouchableOpacity
+                        key={color}
+                        onPress={() => updatePlayerColor(index, color)}
+                        style={[
+                          styles.colorSwatch,
+                          { backgroundColor: color },
+                          isColorActive && styles.colorSwatchActive,
+                        ]}
+                      />
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+          </View>
+        </View>
+
+        {/* Floating Launch Button */}
+        <View style={styles.launchButtonContainer}>
+          <TouchableOpacity
+            activeOpacity={0.88}
+            onPress={handleStartMatch}
+            style={styles.launchButton}
+          >
+            <Icon name="users" size={16} color={COLORS.secondary} style={{ marginRight: 8 }} />
+            <Text style={styles.launchButtonText}>
+              START MULTIPLAYER ({players.length} PLAYERS • {roundsPerPlayer * players.length} TURNS)
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -347,333 +672,568 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  content: {
-    padding: 16,
-    paddingBottom: 40,
-    maxWidth: 550,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  header: {
+  topHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
-    position: 'relative',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 50 : 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: COLORS.surfaceContainerLow,
   },
   backBtn: {
-    position: 'absolute',
-    left: 0,
-    top: 4,
-    backgroundColor: COLORS.surfaceCard,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.surfaceContainer,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  backBtnText: {
-    color: COLORS.textMuted,
-    fontWeight: '800',
-    fontSize: 12,
+  headerCenter: {
+    alignItems: 'center',
   },
-  title: {
-    color: COLORS.text,
-    fontSize: 22,
+  headerTitle: {
+    color: COLORS.primaryLight,
+    fontSize: 16,
     fontWeight: '900',
     letterSpacing: 1,
   },
-  subtitle: {
-    color: COLORS.primary,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    marginTop: 2,
-  },
-  section: {
-    marginBottom: 20,
-  },
-  sectionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  sectionTitle: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-  },
-  sectionInstruction: {
+  headerSubtitle: {
     color: COLORS.textSecondary,
     fontSize: 11,
-    marginBottom: 10,
+    marginTop: 2,
   },
-  addPlayerBtn: {
-    backgroundColor: 'rgba(255, 75, 75, 0.15)',
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 120,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  contentDesktop: {
+    paddingHorizontal: 40,
+    paddingTop: 28,
+  },
+  modeTabsWrapper: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modeTabsContainer: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 9999,
+    padding: 4,
     borderWidth: 1,
-    borderColor: COLORS.primary,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 10,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    width: '100%',
+    maxWidth: 440,
   },
-  addPlayerText: {
-    color: COLORS.primary,
+  modeTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 9999,
+  },
+  modeTabActive: {
+    backgroundColor: 'rgba(192, 193, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 193, 255, 0.3)',
+  },
+  modeTabText: {
+    color: COLORS.textSecondary,
     fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  modeTabTextActive: {
+    color: COLORS.primaryLight,
     fontWeight: '900',
   },
-  playerGrid: {
-    gap: 10,
+  modeTabTextActiveSecondary: {
+    color: COLORS.secondary,
+    fontWeight: '900',
   },
-  playerCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 16,
-    padding: 12,
-    borderWidth: 2,
+  genresSection: {
+    marginBottom: 24,
   },
-  playerCardTop: {
+  subHeading: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: 10,
+  },
+  genreGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 14,
   },
-  avatarBox: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    position: 'relative',
+  genreGridDesktop: {
+    gap: 18,
   },
-  avatarEmoji: {
-    fontSize: 22,
-  },
-  avatarEditBadge: {
-    position: 'absolute',
-    bottom: -2,
-    right: -2,
-    backgroundColor: COLORS.surface,
-    borderRadius: 8,
-    width: 16,
-    height: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-  },
-  avatarEditBadgeText: {
-    fontSize: 8,
-  },
-  nameInputContainer: {
+  categoryCard: {
     flex: 1,
-  },
-  nameInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    minWidth: '46%',
+    maxWidth: '48.5%',
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 20,
     borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
+    padding: 12,
+    position: 'relative',
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+      },
+    }),
   },
-  nameInput: {
-    flex: 1,
+  categoryArtBox: {
+    width: '100%',
+    aspectRatio: 1.25,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    overflow: 'hidden',
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  artGrooveOuter: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  artGrooveCenter: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genreTagPill: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  genreTagText: {
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  playBadge: {
+    position: 'absolute',
+    bottom: 8,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(19, 19, 19, 0.88)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 9999,
+  },
+  playBadgeText: {
+    color: COLORS.text,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  categoryInfo: {
+    paddingHorizontal: 2,
+  },
+  categoryName: {
     color: COLORS.text,
     fontSize: 15,
     fontWeight: '800',
-    padding: 0,
+    marginBottom: 2,
   },
-  randomNameBtn: {
-    padding: 4,
-  },
-  randomNameEmoji: {
-    fontSize: 16,
-  },
-  turnOrderText: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 3,
-    marginLeft: 2,
-  },
-  removeBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  removeBtnText: {
-    color: COLORS.accentRed,
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  avatarPickerDrawer: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.surfaceBorder,
-  },
-  pickerLabel: {
+  categorySub: {
     color: COLORS.textSecondary,
     fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 6,
+    fontWeight: '500',
   },
-  pickerScroll: {
-    marginBottom: 8,
+  artistSection: {
+    marginBottom: 24,
   },
-  emojiChoice: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.surface,
+  searchBarWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 14,
+  },
+  searchInput: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 13,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  selectedArtistBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(78, 222, 163, 0.12)',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: COLORS.secondary,
+    padding: 14,
+    marginBottom: 14,
+  },
+  selectedArtistLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  artistAvatarImage: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  artistAvatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.surfaceContainer,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
   },
-  emojiChoiceText: {
-    fontSize: 18,
+  selectedArtistName: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '800',
   },
-  colorRow: {
+  selectedArtistTag: {
+    color: COLORS.secondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  artistChipsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
   },
-  colorChoice: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  artistChip: {
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 9999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  colorChoiceActive: {
-    borderWidth: 2.5,
-    borderColor: '#FFFFFF',
+  artistChipActive: {
+    borderColor: COLORS.secondary,
+    backgroundColor: 'rgba(78, 222, 163, 0.12)',
+  },
+  artistChipName: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  artistChipNameActive: {
+    color: COLORS.secondary,
+    fontWeight: '800',
+  },
+  artistResultsList: {
+    backgroundColor: COLORS.surfaceContainerLow,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+  },
+  artistResultItem: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  artistResultItemActive: {
+    backgroundColor: 'rgba(78, 222, 163, 0.15)',
+  },
+  artistResultName: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  controlsSection: {
+    backgroundColor: COLORS.surfaceContainerLow,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    marginBottom: 24,
+  },
+  controlGroup: {
+    marginBottom: 18,
+  },
+  controlGroupTitle: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  difficultyRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 8,
+  },
+  diffCard: {
+    flex: 1,
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+  },
+  diffName: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  diffSnippet: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  roundsHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  customRoundsCountBadge: {
+    color: COLORS.primaryLight,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 16,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 12,
+  },
+  stepperButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: 'rgba(192, 193, 255, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(192, 193, 255, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperBtnText: {
+    color: COLORS.primaryLight,
+    fontSize: 24,
+    fontWeight: '900',
+    lineHeight: 28,
+  },
+  stepperDisplay: {
+    alignItems: 'center',
+  },
+  stepperNumberText: {
+    color: COLORS.secondary,
+    fontSize: 28,
+    fontWeight: '900',
+  },
+  stepperLabelText: {
+    color: COLORS.textSecondary,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.5,
   },
   roundsRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 8,
   },
-  roundChoiceBtn: {
+  roundPill: {
     flex: 1,
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
-    paddingVertical: 12,
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    paddingVertical: 10,
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
   },
-  roundChoiceSelected: {
+  roundPillActive: {
     borderColor: COLORS.primary,
-    backgroundColor: 'rgba(255, 75, 75, 0.15)',
+    backgroundColor: 'rgba(192, 193, 255, 0.15)',
   },
-  roundChoiceText: {
+  roundText: {
     color: COLORS.textSecondary,
-    fontWeight: '800',
     fontSize: 12,
+    fontWeight: '800',
   },
-  roundChoiceTextSelected: {
-    color: COLORS.primary,
+  roundTextActive: {
+    color: COLORS.primaryLight,
     fontWeight: '900',
   },
-  customRoundsBox: {
-    marginTop: 10,
-    padding: 12,
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 12,
+  playersSection: {
+    backgroundColor: COLORS.surfaceContainerLow,
+    borderRadius: 20,
+    padding: 18,
     borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    marginBottom: 24,
   },
-  customRoundsPrompt: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  stepperBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.primary,
-  },
-  stepperBtnText: {
-    color: COLORS.primary,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  customRoundsInput: {
-    backgroundColor: COLORS.surface,
-    color: COLORS.text,
-    fontSize: 18,
-    fontWeight: '900',
-    textAlign: 'center',
-    width: 55,
-    height: 36,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
-    padding: 0,
-  },
-  roundsUnitText: {
-    color: COLORS.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  summaryCard: {
-    backgroundColor: COLORS.surfaceCard,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: COLORS.surfaceBorder,
-    marginBottom: 20,
-  },
-  summaryTitle: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  summaryRow: {
+  playersSectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    alignItems: 'center',
+    marginBottom: 14,
   },
-  summaryLabel: {
+  addPlayerMiniBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(78, 222, 163, 0.12)',
+    borderWidth: 1,
+    borderColor: COLORS.secondary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  addPlayerMiniText: {
+    color: COLORS.secondary,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  playersList: {
+    gap: 12,
+  },
+  playerCard: {
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  playerCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  playerAvatarCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.surfaceContainerHigh,
+  },
+  playerAvatarEmoji: {
+    fontSize: 20,
+  },
+  playerInputWrapper: {
+    flex: 1,
+  },
+  playerLabel: {
     color: COLORS.textSecondary,
-    fontSize: 12,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginBottom: 2,
   },
-  summaryVal: {
+  playerNameInput: {
     color: COLORS.text,
-    fontSize: 12,
+    fontSize: 15,
     fontWeight: '800',
+    backgroundColor: COLORS.surfaceContainerHigh,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  startPartyBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 25,
+  removePlayerBtn: {
+    padding: 8,
+  },
+  emojiPickerScroll: {
+    marginBottom: 8,
+  },
+  emojiPickerRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  emojiPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: COLORS.surfaceContainerHigh,
+  },
+  emojiPillActive: {
+    backgroundColor: 'rgba(192, 193, 255, 0.25)',
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  colorSwatchesRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  colorSwatch: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+  },
+  colorSwatchActive: {
+    borderWidth: 2,
+    borderColor: '#fff',
+    transform: [{ scale: 1.15 }],
+  },
+  launchButtonContainer: {
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  launchButton: {
+    flexDirection: 'row',
+    width: '100%',
+    maxWidth: 500,
+    backgroundColor: 'rgba(78, 222, 163, 0.15)',
+    borderWidth: 1.5,
+    borderColor: COLORS.secondary,
+    borderRadius: 9999,
     paddingVertical: 16,
     alignItems: 'center',
-    shadowColor: COLORS.primary,
+    justifyContent: 'center',
+    shadowColor: COLORS.secondary,
+    shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowRadius: 20,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
   },
-  startPartyText: {
-    color: '#FFFFFF',
+  launchButtonText: {
+    color: COLORS.secondary,
+    fontSize: 13,
     fontWeight: '900',
-    fontSize: 15,
-    letterSpacing: 1,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
   },
 });
-

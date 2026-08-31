@@ -1,87 +1,98 @@
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
+/**
+ * API configuration and client calls for Jaribu Beats Engine
+ */
 
-// API client configuration
-const getBaseUrl = () => {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
-    const hostname = window.location.hostname;
-    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-      return `http://${hostname}:8080/api`;
+export const API_BASE = 'http://127.0.0.1:8080/api';
+
+/**
+ * Safe JSON/Text response parser that will never crash on non-JSON error pages
+ */
+async function parseSafe(res, fallbackError = 'Request failed') {
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    // Non-JSON response (e.g. 404 text or 500 html)
+    if (!res.ok) {
+      throw new Error(text.slice(0, 100) || `${fallbackError} (${res.status})`);
     }
   }
-
-  // Detect host IP when running on physical Android device via Expo / Metro
-  const hostUri = Constants.expoConfig?.hostUri || Constants.manifest?.debuggerHost || Constants.manifest2?.extra?.expoClient?.hostUri;
-  if (hostUri) {
-    const ip = hostUri.split(':')[0];
-    if (ip) {
-      return `http://${ip}:8080/api`;
-    }
+  if (!res.ok) {
+    throw new Error(json?.error || text.slice(0, 100) || `${fallbackError} (${res.status})`);
   }
+  return json;
+}
 
-  // Android Emulator default loopback
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:8080/api';
+/**
+ * Fetch persistent player profile from SQLite
+ */
+export async function getProfile() {
+  try {
+    const res = await fetch(`${API_BASE}/profile`);
+    const data = await parseSafe(res, 'Failed to fetch profile');
+    return data.profile || { playerName: 'Clay', avatarEmoji: '🎧', avatarColor: '#c0c1ff' };
+  } catch (e) {
+    console.warn('Profile fetch warning, using fallback:', e.message);
+    return { playerName: 'Clay', avatarEmoji: '🎧', avatarColor: '#c0c1ff' };
   }
+}
 
-  return 'http://127.0.0.1:8080/api';
-};
-
-export const API_BASE = getBaseUrl();
+/**
+ * Save player profile permanently to SQLite
+ */
+export async function saveProfile({ playerName, avatarEmoji, avatarColor }) {
+  const res = await fetch(`${API_BASE}/profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      player_name: playerName || 'Clay',
+      avatar_emoji: avatarEmoji || '🎧',
+      avatar_color: avatarColor || '#c0c1ff',
+    }),
+  });
+  return parseSafe(res, 'Failed to save profile');
+}
 
 /**
  * Fetch available music categories
  */
 export async function getCategories() {
   const res = await fetch(`${API_BASE}/categories`);
-  if (!res.ok) throw new Error('Failed to fetch categories');
-  const data = await res.json();
-  return data.categories;
+  return parseSafe(res, 'Failed to fetch categories');
 }
 
 /**
- * Search songs by artist or title
- */
-export async function searchSongs(query) {
-  const res = await fetch(`${API_BASE}/songs/search?q=${encodeURIComponent(query)}&limit=20`);
-  if (!res.ok) throw new Error('Failed to search songs');
-  return res.json();
-}
-
-/**
- * Search artists with photos & metadata for Artist Spotlight mode
+ * Search Deezer catalog by artist name for Spotlight mode
  */
 export async function searchArtists(query) {
-  const res = await fetch(`${API_BASE}/artists/search?q=${encodeURIComponent(query)}&limit=15`);
-  if (!res.ok) throw new Error('Failed to search artists');
-  return res.json();
+  const res = await fetch(`${API_BASE}/artists/search?q=${encodeURIComponent(query)}`);
+  return parseSafe(res, 'Failed to search artists');
 }
 
 /**
- * Start a Solo Rush game session
+ * Start a Solo Rush Game Session
  */
-export async function startSoloGame({ playerName, avatarEmoji, avatarColor, category, difficulty, totalRounds }) {
+export async function startSoloGame({ category, difficulty, totalRounds, playerName, avatarEmoji, avatarColor }) {
   const res = await fetch(`${API_BASE}/game/solo/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      player_name: playerName || 'Player 1',
-      avatar_emoji: avatarEmoji || '🎧',
-      avatar_color: avatarColor || '#FF5722',
       category: category || 'kenyan',
       difficulty: difficulty || 'medium',
       total_rounds: totalRounds || 5,
+      player: {
+        name: playerName || 'Clay',
+        avatar_emoji: avatarEmoji || '🎧',
+        avatar_color: avatarColor || '#c0c1ff',
+      },
     }),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to start game');
-  }
-  return res.json();
+  return parseSafe(res, 'Failed to start Solo game');
 }
 
 /**
- * Submit answer for solo game
+ * Submit answer for Solo Rush round
  */
 export async function submitSoloAnswer({ sessionId, selectedOptionId, timeTakenMs }) {
   const res = await fetch(`${API_BASE}/game/solo/answer`, {
@@ -93,32 +104,31 @@ export async function submitSoloAnswer({ sessionId, selectedOptionId, timeTakenM
       time_taken_ms: timeTakenMs || 1000,
     }),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to submit answer');
-  }
-  return res.json();
+  return parseSafe(res, 'Failed to submit answer');
 }
 
 /**
  * Start a Pass & Play local multiplayer match
  */
 export async function startPassPlayGame({ players, category, difficulty, roundsPerPlayer }) {
+  const formattedPlayers = (players || []).map((p, idx) => ({
+    id: p.id || `p_${idx + 1}`,
+    name: p.name ? p.name.trim() : `Player ${idx + 1}`,
+    avatar_emoji: p.avatarEmoji || p.avatar_emoji || '🎧',
+    avatar_color: p.avatarColor || p.avatar_color || '#c0c1ff',
+  }));
+
   const res = await fetch(`${API_BASE}/game/pass-play/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      players,
+      players: formattedPlayers,
       category: category || 'kenyan',
       difficulty: difficulty || 'medium',
       rounds_per_player: roundsPerPlayer || 3,
     }),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to start Pass & Play');
-  }
-  return res.json();
+  return parseSafe(res, 'Failed to start Pass & Play match');
 }
 
 /**
@@ -134,44 +144,61 @@ export async function submitPassPlayAnswer({ sessionId, selectedOptionId, timeTa
       time_taken_ms: timeTakenMs || 1000,
     }),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to submit Pass & Play turn');
-  }
-  return res.json();
+  return parseSafe(res, 'Failed to submit multiplayer turn');
 }
 
 /**
- * Fetch leaderboard rankings (Deduplicated single best per player)
+ * Fetch all Solo games played from SQLite with category filter
  */
-export async function getLeaderboard({ category = 'all', difficulty = 'all', mode = 'all', limit = 25 } = {}) {
+export async function getSoloGames({ category = 'all', limit = 50 } = {}) {
   const params = new URLSearchParams();
   if (category && category !== 'all') params.append('category', category);
-  if (difficulty && difficulty !== 'all') params.append('difficulty', difficulty);
-  if (mode && mode !== 'all') params.append('mode', mode);
   params.append('limit', limit.toString());
 
-  const res = await fetch(`${API_BASE}/leaderboard?${params.toString()}`);
-  if (!res.ok) throw new Error('Failed to fetch leaderboard');
-  const data = await res.json();
-  return data.leaderboard || [];
+  const res = await fetch(`${API_BASE}/games/solo?${params.toString()}`);
+  const data = await parseSafe(res, 'Failed to fetch solo games');
+  return data.games || [];
 }
 
 /**
- * Fetch player personal match history and records
+ * Fetch all Multiplayer matches played from SQLite with category filter
  */
-export async function getMyRecords(playerName = 'Player 1') {
+export async function getMultiplayerGames({ category = 'all', limit = 50 } = {}) {
+  const params = new URLSearchParams();
+  if (category && category !== 'all') params.append('category', category);
+  params.append('limit', limit.toString());
+
+  const res = await fetch(`${API_BASE}/games/multiplayer?${params.toString()}`);
+  const data = await parseSafe(res, 'Failed to fetch multiplayer games');
+  return data.matches || [];
+}
+
+/**
+ * Fetch player personal match history and calculated all-time high score / accumulated points
+ */
+export async function getMyRecords(playerName = 'Clay') {
   const res = await fetch(`${API_BASE}/records/my?player_name=${encodeURIComponent(playerName)}`);
-  if (!res.ok) throw new Error('Failed to fetch player records');
-  return res.json();
+  return parseSafe(res, 'Failed to fetch player records');
+}
+
+/**
+ * Submit high score to leaderboard table
+ */
+export async function submitLeaderboard(entry) {
+  const res = await fetch(`${API_BASE}/leaderboard/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+  });
+  return parseSafe(res, 'Failed to submit leaderboard');
 }
 
 /**
  * Clear / reset all records and history
  */
 export async function resetAllRecords(playerName = '') {
-  const url = playerName ? `${API_BASE}/records/reset?player_name=${encodeURIComponent(playerName)}` : `${API_BASE}/records/reset`;
-  const res = await fetch(url, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to reset records');
-  return res.json();
+  const res = await fetch(`${API_BASE}/records/reset?player_name=${encodeURIComponent(playerName)}`, {
+    method: 'POST',
+  });
+  return parseSafe(res, 'Failed to reset records');
 }

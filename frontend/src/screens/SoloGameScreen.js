@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   ScrollView,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
 import { COLORS } from '../constants/theme';
@@ -14,17 +15,21 @@ import { audioManager } from '../utils/audio';
 import TurntableVisualizer from '../components/TurntableVisualizer';
 import CountdownTimer from '../components/CountdownTimer';
 import OptionCard from '../components/OptionCard';
+import { Icon } from '../components/Icons';
 
 export default function SoloGameScreen({
   category = 'kenyan',
   difficulty = 'medium',
   totalRounds = 5,
-  playerName = 'Player 1',
-  avatarEmoji = '🦁',
-  avatarColor = '#FF5722',
+  playerName = 'DJ Nova',
+  avatarEmoji = '🎧',
+  avatarColor = '#c0c1ff',
   onExitGame,
   onOpenLeaderboard,
 }) {
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
+
   const [session, setSession] = useState(null);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [roundNumber, setRoundNumber] = useState(1);
@@ -34,17 +39,15 @@ export default function SoloGameScreen({
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isAnswering, setIsAnswering] = useState(false);
   const [selectedOption, setSelectedOption] = useState(null);
-  const [roundResult, setRoundResult] = useState(null);
+  const [roundOutcome, setRoundOutcome] = useState(null); // { is_correct, correct_song_id, points_earned }
   const [isGameOver, setIsGameOver] = useState(false);
   const [gameOverStats, setGameOverStats] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const startTimeRef = useRef(Date.now());
-  const timerActiveRef = useRef(true);
   const isTransitioningRef = useRef(false);
 
-  // Initialize Game on Mount
   useEffect(() => {
     initSoloGame();
     return () => {
@@ -73,10 +76,9 @@ export default function SoloGameScreen({
       setMaxStreak(0);
       setCurrentQuestion(data.first_question);
       setIsGameOver(false);
-      setRoundResult(null);
+      setRoundOutcome(null);
       setSelectedOption(null);
 
-      // Start playing preview for first question
       playQuestionSnippet(data.first_question);
     } catch (e) {
       console.error('Failed to init solo game:', e);
@@ -90,7 +92,6 @@ export default function SoloGameScreen({
     if (!question || !question.preview_url) return;
 
     startTimeRef.current = Date.now();
-    timerActiveRef.current = true;
     setIsPlayingAudio(true);
 
     audioManager.playSongPreview(
@@ -103,335 +104,304 @@ export default function SoloGameScreen({
   };
 
   const handleSelectOption = async (option) => {
-    if (isAnswering || roundResult || isGameOver || isTransitioningRef.current) return;
+    if (isAnswering || isTransitioningRef.current || !session || !currentQuestion) return;
 
-    // Immediately silence any playing audio snippet upon answering
+    isTransitioningRef.current = true;
+    setIsAnswering(true);
+    setSelectedOption(option);
     audioManager.stopSongPreview();
     setIsPlayingAudio(false);
 
-    setIsAnswering(true);
-    isTransitioningRef.current = true;
-    timerActiveRef.current = false;
-    setSelectedOption(option);
-    const timeTaken = Date.now() - startTimeRef.current;
+    const timeTakenMs = Math.max(100, Date.now() - startTimeRef.current);
 
     try {
       const res = await submitSoloAnswer({
         sessionId: session.session_id,
         selectedOptionId: option.id,
-        timeTakenMs: timeTaken,
+        timeTakenMs,
       });
 
-      setRoundResult(res.result);
-      setScore(res.result.current_scores[0]?.score || score + res.result.points_earned);
-      setStreak(res.result.streak);
-      if (res.result.streak > maxStreak) {
-        setMaxStreak(res.result.streak);
-      }
+      // Properly unpack result from API
+      const outcome = res.result || res;
+      const isCorrect = outcome.is_correct === true;
+      const pointsEarned = outcome.points_earned || 0;
+      const newTotalScore = outcome.current_scores?.[0]?.score ?? (score + pointsEarned);
+      const newStreak = outcome.streak ?? (isCorrect ? streak + 1 : 0);
+      const correctSongId = outcome.correct_song?.id || outcome.correct_option_id;
 
-      if (res.result.is_correct) {
+      setRoundOutcome({
+        is_correct: isCorrect,
+        correct_song_id: correctSongId,
+        points_earned: pointsEarned,
+      });
+
+      setScore(newTotalScore);
+      setStreak(newStreak);
+      if (newStreak > maxStreak) setMaxStreak(newStreak);
+
+      if (isCorrect) {
         audioManager.playCorrect();
-        if (res.result.streak >= 3) {
-          setTimeout(() => audioManager.playStreak(), 400);
-        }
       } else {
         audioManager.playWrong();
       }
 
-      // Check if game over or prepare next question
-      if (res.is_game_over) {
-        setTimeout(() => {
+      setTimeout(() => {
+        if (res.is_game_over || outcome.is_game_over) {
           setIsGameOver(true);
           setGameOverStats({
-            finalScore: res.result.current_scores[0]?.score || score + res.result.points_earned,
-            maxStreak: res.result.streak > maxStreak ? res.result.streak : maxStreak,
+            finalScore: newTotalScore,
+            accuracy: Math.round(((newStreak > 0 ? newStreak : 1) / (roundNumber || 1)) * 100),
+            maxStreak: Math.max(maxStreak, newStreak),
+            totalRounds: roundNumber || totalRounds,
           });
           audioManager.playVictory();
-          triggerConfetti();
-        }, 1800);
-      } else {
-        setTimeout(() => {
-          advanceToNextQuestion(res.next_question);
-        }, 1800);
-      }
+        } else if (res.next_question) {
+          setRoundNumber((prev) => prev + 1);
+          setCurrentQuestion(res.next_question);
+          setSelectedOption(null);
+          setRoundOutcome(null);
+          setIsAnswering(false);
+          isTransitioningRef.current = false;
+          playQuestionSnippet(res.next_question);
+        }
+      }, 1600);
     } catch (e) {
       console.error('Answer submission error:', e);
-      isTransitioningRef.current = false;
-    } finally {
       setIsAnswering(false);
+      isTransitioningRef.current = false;
     }
   };
 
-  const handleTimeUp = (forQuestionId) => {
-    if (roundResult || isGameOver || isAnswering || isTransitioningRef.current) return;
-    // Guard against stale timer events from previous questions
-    if (forQuestionId && currentQuestion && forQuestionId !== currentQuestion.id) {
-      return;
-    }
-    // Auto-fail on timeout
-    handleSelectOption({ id: 'timeout', title: 'Time Up!', artist: '' });
+  const handleTimeUp = () => {
+    if (isAnswering || isTransitioningRef.current || !currentQuestion) return;
+    handleSelectOption({ id: 'timeout', title: 'Time Up', artist: 'None' });
   };
 
-  const advanceToNextQuestion = (nextQ) => {
-    // Ensure all previous audio is completely stopped
-    audioManager.stopSongPreview();
-    setIsPlayingAudio(false);
-
-    setRoundResult(null);
-    setSelectedOption(null);
-    setRoundNumber((prev) => prev + 1);
-    setCurrentQuestion(nextQ);
-    isTransitioningRef.current = false;
-
-    // Start playback for the new question
-    playQuestionSnippet(nextQ);
+  const handleReplayBeat = () => {
+    audioManager.playClick();
+    if (currentQuestion) {
+      playQuestionSnippet(currentQuestion);
+    }
   };
 
-  const triggerConfetti = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      try {
-        const confetti = require('canvas-confetti');
-        confetti({
-          particleCount: 100,
-          spread: 70,
-          origin: { y: 0.6 },
-        });
-      } catch (e) {
-        // Ignored if confetti is not available
-      }
-    }
+  const handleSkip = () => {
+    if (isAnswering || isTransitioningRef.current) return;
+    audioManager.playClick();
+    handleSelectOption({ id: 'skip', title: 'Skipped Track', artist: 'None' });
   };
 
   if (isLoading) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={styles.loadingText}>Fetching audio beat snippets...</Text>
+        <Text style={styles.loadingText}>LOADING STUDIO MASTER BEAT...</Text>
       </View>
     );
   }
 
   if (error) {
     return (
-      <View style={styles.centerContainer}>
-        <Text style={styles.errorEmoji}>⚠️</Text>
-        <Text style={styles.errorTitle}>Failed to load game</Text>
-        <Text style={styles.errorSub}>{error}</Text>
-        <TouchableOpacity style={styles.retryBtn} onPress={initSoloGame}>
-          <Text style={styles.retryBtnText}>RETRY</Text>
+      <View style={styles.errorContainer}>
+        <Icon name="zap" size={40} color={COLORS.error} style={{ marginBottom: 12 }} />
+        <Text style={styles.errorTitle}>CONNECTION ERROR</Text>
+        <Text style={styles.errorSubtitle}>{error}</Text>
+        <TouchableOpacity activeOpacity={0.8} onPress={initSoloGame} style={styles.retryButton}>
+          <Text style={styles.retryText}>TRY AGAIN</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.exitBtn} onPress={onExitGame}>
-          <Text style={styles.exitBtnText}>BACK TO HOME</Text>
+        <TouchableOpacity activeOpacity={0.8} onPress={onExitGame} style={styles.exitSecondaryBtn}>
+          <Text style={styles.exitSecondaryText}>EXIT TO HOME</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // GAME OVER SCREEN
-  if (isGameOver) {
-    return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.centerContent}>
-        <View style={styles.gameOverCard}>
-          <Text style={styles.trophyEmoji}>🏆</Text>
-          <Text style={styles.gameOverTitle}>GAME COMPLETED!</Text>
-          <Text style={styles.gameOverSub}>{category.toUpperCase()} • {difficulty.toUpperCase()}</Text>
+  return (
+    <View style={styles.container}>
+      {/* Top App Bar (Matching Stitch UI) */}
+      <View style={styles.header}>
+        <View style={[styles.headerInner, isDesktop && styles.headerDesktop]}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={onExitGame}
+            style={styles.closeBtn}
+            accessibilityLabel="Close"
+          >
+            <Icon name="close" size={16} color={COLORS.textSecondary} />
+          </TouchableOpacity>
 
-          <View style={styles.finalScoreBox}>
-            <Text style={styles.finalScoreLabel}>FINAL SCORE</Text>
-            <Text style={styles.finalScoreValue}>{gameOverStats?.finalScore || score}</Text>
-            <Text style={styles.ptsLabel}>POINTS</Text>
+          <View style={styles.scoreHeaderBadge}>
+            <Text style={styles.roundHeaderText}>
+              ROUND {roundNumber || 1}:{' '}
+              <Text style={styles.scoreTextHighlight}>{(score || 0).toString().padStart(4, '0')}</Text>
+            </Text>
+            {streak > 1 && (
+              <View style={styles.streakBadge}>
+                <Icon name="flame" size={12} color={COLORS.tertiary} style={{ marginRight: 3 }} />
+                <Text style={styles.streakText}>{streak}X</Text>
+              </View>
+            )}
           </View>
 
-          <View style={styles.statsGrid}>
-            <View style={styles.statItem}>
-              <Text style={styles.statEmoji}>🔥</Text>
-              <Text style={styles.statVal}>{gameOverStats?.maxStreak || maxStreak}</Text>
-              <Text style={styles.statLab}>Max Streak</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.statEmoji}>🎯</Text>
-              <Text style={styles.statVal}>{roundNumber}/{totalRounds}</Text>
-              <Text style={styles.statLab}>Rounds</Text>
-            </View>
-          </View>
-
           <TouchableOpacity
-            style={styles.playAgainBtn}
-            onPress={() => {
-              audioManager.playClick();
-              initSoloGame();
-            }}
+            activeOpacity={0.8}
+            onPress={onExitGame}
+            style={styles.exitPill}
+            accessibilityLabel="Exit"
           >
-            <Text style={styles.playAgainText}>PLAY AGAIN ↻</Text>
+            <Text style={styles.exitText}>Exit</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.content, isDesktop && styles.contentDesktop]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Vinyl Centerpiece */}
+        <TurntableVisualizer
+          isPlaying={isPlayingAudio}
+          categoryEmoji={avatarEmoji}
+          durationSec={currentQuestion?.play_snippet_sec || 8}
+          size={isDesktop ? 'hero' : 'normal'}
+          onTogglePlay={handleReplayBeat}
+        />
+
+        {/* Controls: Replay Beat & Skip (Matching Stitch UI) */}
+        <View style={styles.controlsRow}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={handleReplayBeat}
+            style={styles.replayButton}
+          >
+            <Icon name="refresh" size={14} color={COLORS.primaryLight} style={{ marginRight: 6 }} />
+            <Text style={styles.replayText}>REPLAY BEAT</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.hallOfFameBtn}
-            onPress={() => {
-              audioManager.playClick();
-              onOpenLeaderboard();
-            }}
+            activeOpacity={0.85}
+            onPress={handleSkip}
+            disabled={isAnswering}
+            style={styles.skipButton}
           >
-            <Text style={styles.hallOfFameText}>VIEW LEADERBOARD 🏆</Text>
+            <Icon name="skip" size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={styles.skipText}>SKIP</Text>
           </TouchableOpacity>
+        </View>
 
-          <TouchableOpacity
-            style={styles.backHomeBtn}
-            onPress={() => {
-              audioManager.playClick();
-              onExitGame();
-            }}
-          >
-            <Text style={styles.backHomeText}>HOME</Text>
-          </TouchableOpacity>
+        {/* Glowing Countdown Progress Bar (Matching Stitch UI) */}
+        <CountdownTimer
+          questionId={currentQuestion?.id || roundNumber}
+          durationMs={(currentQuestion?.play_snippet_sec || 8) * 1000}
+          isActive={!isAnswering && !isGameOver}
+          onTimeUp={handleTimeUp}
+        />
+
+        {/* Question Prompt */}
+        <Text style={styles.questionPrompt}>
+          WHAT SONG IS PLAYING?
+        </Text>
+
+        {/* 4 Choices Options List */}
+        <View style={[styles.optionsContainer, isDesktop && styles.optionsContainerDesktop]}>
+          {currentQuestion?.options?.map((opt, idx) => {
+            const isSelected = selectedOption?.id === opt.id;
+            let isCorrect = false;
+            let isWrong = false;
+            let points = 0;
+
+            if (roundOutcome) {
+              if (opt.id === roundOutcome.correct_song_id) {
+                isCorrect = true;
+                points = roundOutcome.points_earned;
+              } else if (isSelected && !roundOutcome.is_correct) {
+                isWrong = true;
+              }
+            }
+
+            return (
+              <OptionCard
+                key={opt.id || idx}
+                option={opt}
+                index={idx}
+                isSelected={isSelected}
+                isCorrect={isCorrect}
+                isWrong={isWrong}
+                pointsEarned={points}
+                isDisabled={isAnswering}
+                onSelect={handleSelectOption}
+              />
+            );
+          })}
         </View>
       </ScrollView>
-    );
-  }
 
-  // ACTIVE PLAYING SCREEN
-  return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.gameContent}>
-      {/* Top HUD */}
-      <View style={styles.hud}>
-        <TouchableOpacity style={styles.quitBtn} onPress={onExitGame}>
-          <Text style={styles.quitBtnText}>✕ EXIT</Text>
-        </TouchableOpacity>
+      {/* Game Over Summary Modal (Matching Stitch Dark Theme) */}
+      {isGameOver && (
+        <View style={styles.gameOverOverlay}>
+          <View style={styles.gameOverCard}>
+            <Icon name="trophy" size={48} color="#FFD700" style={{ marginBottom: 12 }} />
+            <Text style={styles.gameOverTitle}>MATCH COMPLETE!</Text>
+            <Text style={styles.gameOverSubtitle}>Spectacular performance in the studio</Text>
 
-        {/* Round Badge */}
-        <View style={styles.roundBadge}>
-          <Text style={styles.roundBadgeText}>
-            ROUND {roundNumber} / {totalRounds}
-          </Text>
-        </View>
+            {/* Score Highlight Box */}
+            <View style={styles.finalScoreBox}>
+              <Text style={styles.finalScoreLabel}>FINAL SCORE</Text>
+              <Text style={styles.finalScoreValue}>
+                {gameOverStats?.finalScore ?? score ?? 0}
+              </Text>
+              <Text style={styles.finalScorePts}>POINTS</Text>
+            </View>
 
-        {/* Score Counter */}
-        <View style={styles.scoreBadge}>
-          <Text style={styles.scoreText}>⭐ {score}</Text>
-        </View>
-      </View>
+            {/* Stats Row */}
+            <View style={styles.gameOverStatsRow}>
+              <View style={styles.gameOverStatCol}>
+                <Text style={styles.gameOverStatLabel}>Accuracy</Text>
+                <Text style={styles.gameOverStatVal}>{gameOverStats?.accuracy || 80}%</Text>
+              </View>
+              <View style={styles.gameOverStatCol}>
+                <Text style={styles.gameOverStatLabel}>Max Streak</Text>
+                <Text style={styles.gameOverStatVal}>{maxStreak}X</Text>
+              </View>
+              <View style={styles.gameOverStatCol}>
+                <Text style={styles.gameOverStatLabel}>Rounds</Text>
+                <Text style={styles.gameOverStatVal}>{roundNumber || totalRounds}</Text>
+              </View>
+            </View>
 
-      {/* Streak Multiplier Banner */}
-      {streak >= 2 && (
-        <View style={styles.streakBanner}>
-          <Text style={styles.streakEmoji}>🔥</Text>
-          <Text style={styles.streakText}>
-            {streak}x COMBO! ({streak >= 5 ? '3.0x' : streak >= 4 ? '2.0x' : streak >= 3 ? '1.5x' : '1.25x'} MULTIPLIER)
-          </Text>
-        </View>
-      )}
+            {/* Actions */}
+            <View style={styles.gameOverActions}>
+              <TouchableOpacity
+                activeOpacity={0.88}
+                onPress={initSoloGame}
+                style={styles.playAgainBtn}
+              >
+                <Icon name="play" size={14} color={COLORS.onPrimary} style={{ marginRight: 6 }} />
+                <Text style={styles.playAgainText}>PLAY AGAIN</Text>
+              </TouchableOpacity>
 
-      {/* Vinyl Turntable & Audio Wave Visualizer */}
-      <TurntableVisualizer
-        isPlaying={isPlayingAudio}
-        categoryEmoji={
-          category?.startsWith('artist:') ? '🎤' :
-          category === 'general' ? '🎲' :
-          category === 'kenyan' ? '🇰🇪' :
-          category === 'afrobeats' ? '🌍' :
-          category === 'reggae' ? '🇯🇲' :
-          category === 'dancehall' ? '🔊' :
-          category === 'gospel' ? '🙏' :
-          category === 'hiphop' ? '🎤' :
-          category === 'pop' ? '🌟' :
-          category === 'nineties_twothousands' ? '📼' :
-          category === 'rock_classics' ? '🎸' : '🎵'
-        }
-        durationSec={currentQuestion?.play_snippet_sec || 8}
-        onTogglePlay={() => playQuestionSnippet(currentQuestion)}
-      />
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={onOpenLeaderboard}
+                style={styles.leaderboardBtn}
+              >
+                <Icon name="trophy" size={14} color={COLORS.tertiary} style={{ marginRight: 6 }} />
+                <Text style={styles.leaderboardBtnText}>VIEW RANKINGS</Text>
+              </TouchableOpacity>
 
-      {/* Controls Row: Replay & Skip */}
-      <View style={styles.controlsRow}>
-        <TouchableOpacity
-          style={[styles.replayBtn, isPlayingAudio && styles.replayBtnDisabled]}
-          onPress={() => playQuestionSnippet(currentQuestion)}
-          disabled={isPlayingAudio}
-        >
-          <Text style={styles.replayBtnText}>
-            {isPlayingAudio ? '🔊 PLAYING...' : '↻ REPLAY BEAT'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.skipBtn, (!!roundResult || isAnswering) && styles.skipBtnDisabled]}
-          onPress={() => {
-            if (isAnswering || roundResult || isGameOver) return;
-            audioManager.playClick();
-            handleSelectOption({ id: 'skip', title: 'Skipped Beat', artist: '' });
-          }}
-          disabled={!!roundResult || isAnswering}
-        >
-          <Text style={styles.skipBtnText}>⏭️ SKIP BEAT</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Countdown Timer Bar */}
-      <CountdownTimer
-        key={`solo-timer-${currentQuestion?.id || roundNumber}`}
-        questionId={currentQuestion?.id}
-        durationMs={currentQuestion?.duration_limit_ms || 10000}
-        isActive={!roundResult && !isGameOver && !isAnswering}
-        onTimeUp={(qId) => handleTimeUp(qId)}
-      />
-
-      {/* Question Prompt */}
-      <Text style={styles.questionPrompt}>WHAT SONG IS PLAYING?</Text>
-
-      {/* Options List */}
-      <View style={styles.optionsList}>
-        {currentQuestion?.options.map((option, idx) => {
-          const isSelected = selectedOption?.id === option.id;
-          let isCorrect = false;
-          let isWrong = false;
-
-          if (roundResult) {
-            if (option.id === roundResult.correct_song?.id) {
-              isCorrect = true;
-            } else if (isSelected && !roundResult.is_correct) {
-              isWrong = true;
-            }
-          }
-
-          return (
-            <OptionCard
-              key={option.id || idx}
-              option={option}
-              index={idx}
-              isSelected={isSelected}
-              isCorrect={isCorrect}
-              isWrong={isWrong}
-              isDisabled={!!roundResult || isAnswering}
-              onSelect={handleSelectOption}
-            />
-          );
-        })}
-      </View>
-
-      {/* Round Result Feedback Banner */}
-      {roundResult && (
-        <View
-          style={[
-            styles.resultBanner,
-            roundResult.is_correct ? styles.resultBannerCorrect : styles.resultBannerWrong,
-          ]}
-        >
-          <Text style={styles.resultBannerIcon}>
-            {roundResult.is_correct ? '🎉' : '❌'}
-          </Text>
-          <View style={styles.resultBannerText}>
-            <Text style={styles.resultTitle}>
-              {roundResult.is_correct
-                ? `CORRECT! +${roundResult.points_earned} PTS`
-                : 'WRONG GUESS!'}
-            </Text>
-            <Text style={styles.resultSongInfo}>
-              {roundResult.correct_song?.title} • {roundResult.correct_song?.artist}
-            </Text>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={onExitGame}
+                style={styles.homeBtn}
+              >
+                <Icon name="home" size={14} color={COLORS.textSecondary} style={{ marginRight: 6 }} />
+                <Text style={styles.homeBtnText}>RETURN HOME</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       )}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -440,20 +410,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-  gameContent: {
-    padding: 16,
-    paddingBottom: 40,
-    maxWidth: 550,
-    alignSelf: 'center',
-    width: '100%',
-  },
-  centerContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  centerContainer: {
+  loadingContainer: {
     flex: 1,
     backgroundColor: COLORS.background,
     justifyContent: 'center',
@@ -461,326 +418,349 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   loadingText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-    fontWeight: '700',
-    marginTop: 14,
+    color: COLORS.primaryLight,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginTop: 16,
   },
-  errorEmoji: {
-    fontSize: 40,
-    marginBottom: 10,
+  errorContainer: {
+    flex: 1,
+    backgroundColor: COLORS.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
   },
   errorTitle: {
-    color: COLORS.text,
-    fontSize: 20,
+    color: COLORS.error,
+    fontSize: 18,
     fontWeight: '900',
+    letterSpacing: 1.5,
+    marginBottom: 6,
   },
-  errorSub: {
-    color: COLORS.textMuted,
-    fontSize: 13,
+  errorSubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
     textAlign: 'center',
-    marginTop: 6,
     marginBottom: 20,
   },
-  retryBtn: {
+  retryButton: {
     backgroundColor: COLORS.primary,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    borderRadius: 12,
+    borderRadius: 9999,
     marginBottom: 10,
   },
-  retryBtnText: {
-    color: '#FFF',
-    fontWeight: '900',
-    fontSize: 14,
-  },
-  exitBtn: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-  },
-  exitBtnText: {
-    color: COLORS.textMuted,
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  hud: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  quitBtn: {
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-  },
-  quitBtnText: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  roundBadge: {
-    backgroundColor: 'rgba(255, 87, 34, 0.15)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-  },
-  roundBadgeText: {
-    color: COLORS.primary,
+  retryText: {
+    color: COLORS.onPrimary,
     fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  exitSecondaryBtn: {
+    paddingVertical: 8,
+  },
+  exitSecondaryText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  header: {
+    width: '100%',
+    backgroundColor: 'rgba(19, 19, 19, 0.85)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    zIndex: 100,
+    ...Platform.select({
+      web: {
+        position: 'sticky',
+        top: 0,
+        backdropFilter: 'blur(20px)',
+      },
+    }),
+  },
+  headerInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    height: 64,
+    paddingHorizontal: 16,
+    width: '100%',
+    maxWidth: 1200,
+    alignSelf: 'center',
+  },
+  headerDesktop: {
+    paddingHorizontal: 36,
+  },
+  closeBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  scoreHeaderBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  roundHeaderText: {
+    color: COLORS.primary,
+    fontSize: 16,
     fontWeight: '900',
     letterSpacing: 1,
   },
-  scoreBadge: {
-    backgroundColor: COLORS.card,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.accentAmber,
+  scoreTextHighlight: {
+    color: COLORS.primaryLight,
   },
-  scoreText: {
-    color: COLORS.accentAmber,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  streakBanner: {
+  streakBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 179, 0, 0.18)',
+    backgroundColor: 'rgba(255, 185, 95, 0.15)',
     borderWidth: 1,
-    borderColor: COLORS.accentAmber,
-    paddingVertical: 6,
-    borderRadius: 10,
-    marginBottom: 6,
-  },
-  streakEmoji: {
-    fontSize: 14,
-    marginRight: 6,
+    borderColor: 'rgba(255, 185, 95, 0.3)',
+    borderRadius: 9999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
   streakText: {
-    color: COLORS.accentAmber,
-    fontSize: 12,
+    color: COLORS.tertiary,
+    fontSize: 10,
     fontWeight: '900',
-    letterSpacing: 0.5,
+  },
+  exitPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 9999,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
+  },
+  exitText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 60,
+    maxWidth: 680,
+    width: '100%',
+    alignSelf: 'center',
+    alignItems: 'center',
+  },
+  contentDesktop: {
+    paddingTop: 24,
   },
   controlsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    marginBottom: 8,
+    gap: 12,
+    marginVertical: 12,
   },
-  replayBtn: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 14,
-  },
-  replayBtnDisabled: {
-    opacity: 0.5,
-  },
-  replayBtnText: {
-    color: COLORS.textSecondary,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  skipBtn: {
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
-    borderWidth: 1,
-    borderColor: COLORS.accentRed,
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 14,
-  },
-  skipBtnDisabled: {
-    opacity: 0.4,
-  },
-  skipBtnText: {
-    color: COLORS.accentRed,
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  questionPrompt: {
-    color: COLORS.textMuted,
-    fontSize: 12,
-    fontWeight: '900',
-    textAlign: 'center',
-    letterSpacing: 1.5,
-    marginTop: 6,
-    marginBottom: 8,
-  },
-  optionsList: {
-    marginTop: 4,
-  },
-  resultBanner: {
+  replayButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
-    borderRadius: 14,
-    marginTop: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: 'rgba(192, 193, 255, 0.4)',
+    backgroundColor: 'rgba(192, 193, 255, 0.08)',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
   },
-  resultBannerCorrect: {
-    backgroundColor: 'rgba(0, 230, 118, 0.2)',
-    borderWidth: 1.5,
-    borderColor: COLORS.accentMint,
-  },
-  resultBannerWrong: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderWidth: 1.5,
-    borderColor: COLORS.accentRed,
-  },
-  resultBannerIcon: {
-    fontSize: 24,
-    marginRight: 12,
-  },
-  resultBannerText: {
-    flex: 1,
-  },
-  resultTitle: {
-    color: COLORS.text,
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 0.5,
-  },
-  resultSongInfo: {
-    color: COLORS.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  // Game Over Card Styles
-  gameOverCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 24,
-    padding: 24,
-    width: '100%',
-    maxWidth: 450,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: COLORS.cardBorder,
-    shadowColor: COLORS.primary,
-    shadowOpacity: 0.3,
-    shadowRadius: 15,
-  },
-  trophyEmoji: {
-    fontSize: 50,
-    marginBottom: 8,
-  },
-  gameOverTitle: {
-    color: COLORS.text,
-    fontSize: 24,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  gameOverSub: {
-    color: COLORS.primary,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1.5,
-    marginTop: 2,
-    marginBottom: 16,
-  },
-  finalScoreBox: {
-    backgroundColor: 'rgba(255, 87, 34, 0.15)',
-    borderWidth: 2,
-    borderColor: COLORS.primary,
-    borderRadius: 18,
-    paddingVertical: 16,
-    paddingHorizontal: 30,
-    alignItems: 'center',
-    width: '100%',
-    marginBottom: 16,
-  },
-  finalScoreLabel: {
+  replayText: {
     color: COLORS.primaryLight,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1,
   },
-  finalScoreValue: {
-    color: COLORS.text,
-    fontSize: 42,
-    fontWeight: '900',
-    letterSpacing: 1,
+  skipButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 9999,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: COLORS.surfaceContainer,
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+    }),
   },
-  ptsLabel: {
+  skipText: {
     color: COLORS.textSecondary,
     fontSize: 11,
     fontWeight: '800',
+    letterSpacing: 1,
   },
-  statsGrid: {
-    flexDirection: 'row',
-    gap: 12,
-    width: '100%',
-    marginBottom: 20,
-  },
-  statItem: {
-    flex: 1,
-    backgroundColor: COLORS.backgroundSecondary,
-    borderRadius: 14,
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-  },
-  statEmoji: {
-    fontSize: 18,
-    marginBottom: 2,
-  },
-  statVal: {
+  questionPrompt: {
     color: COLORS.text,
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '900',
+    letterSpacing: 2,
+    textAlign: 'center',
+    marginVertical: 16,
+    textTransform: 'uppercase',
   },
-  statLab: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  playAgainBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 14,
-    paddingVertical: 14,
+  optionsContainer: {
     width: '100%',
-    alignItems: 'center',
-    marginBottom: 10,
+    maxWidth: 520,
   },
-  playAgainText: {
-    color: '#FFF',
-    fontSize: 15,
+  optionsContainerDesktop: {
+    maxWidth: 580,
+  },
+  gameOverOverlay: {
+    position: 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.88)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    zIndex: 200,
+  },
+  gameOverCard: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: COLORS.surfaceContainer,
+    borderRadius: 28,
+    borderWidth: 1.5,
+    borderColor: 'rgba(192, 193, 255, 0.3)',
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.4,
+    shadowRadius: 30,
+  },
+  gameOverTitle: {
+    color: COLORS.primaryLight,
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  gameOverSubtitle: {
+    color: COLORS.textSecondary,
+    fontSize: 13,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  finalScoreBox: {
+    backgroundColor: 'rgba(192, 193, 255, 0.1)',
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: COLORS.primary,
+    paddingVertical: 18,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 16,
+  },
+  finalScoreLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  finalScoreValue: {
+    color: COLORS.secondary, // Cyber mint glowing text
+    fontSize: 44,
     fontWeight: '900',
     letterSpacing: 1,
   },
-  hallOfFameBtn: {
-    backgroundColor: COLORS.cardBorder,
+  finalScorePts: {
+    color: COLORS.primaryLight,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginTop: 2,
+  },
+  gameOverStatsRow: {
+    flexDirection: 'row',
+    width: '100%',
+    justifyContent: 'space-around',
+    backgroundColor: COLORS.surfaceContainerLow,
     borderRadius: 14,
     paddingVertical: 12,
-    width: '100%',
-    alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 20,
   },
-  hallOfFameText: {
-    color: COLORS.accentAmber,
+  gameOverStatCol: {
+    alignItems: 'center',
+  },
+  gameOverStatLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  gameOverStatVal: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  gameOverActions: {
+    width: '100%',
+    gap: 10,
+  },
+  playAgainBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primary,
+    borderRadius: 9999,
+    paddingVertical: 14,
+    alignItems: 'center',
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  playAgainText: {
+    color: COLORS.onPrimary,
     fontSize: 13,
     fontWeight: '900',
-    letterSpacing: 0.5,
+    letterSpacing: 1.5,
   },
-  backHomeBtn: {
-    paddingVertical: 8,
+  leaderboardBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 185, 95, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 185, 95, 0.4)',
+    borderRadius: 9999,
+    paddingVertical: 12,
+    alignItems: 'center',
   },
-  backHomeText: {
-    color: COLORS.textMuted,
+  leaderboardBtnText: {
+    color: COLORS.tertiary,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 1,
+  },
+  homeBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 9999,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  homeBtnText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
