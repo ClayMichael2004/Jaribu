@@ -70,8 +70,14 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.POST("/game/pass-play/start", h.StartPassPlayGame)
 		api.POST("/game/pass-play/answer", h.SubmitPassPlayAnswer)
 
-		// Leaderboards & Player Records
+		// Player Profile Persistence (Permanent in SQLite)
+		api.GET("/profile", h.GetProfile)
+		api.POST("/profile", h.SaveProfile)
+
+		// Leaderboards & Games Feed
 		api.GET("/leaderboard", h.GetLeaderboard)
+		api.GET("/games/solo", h.GetSoloGames)
+		api.GET("/games/multiplayer", h.GetMultiplayerGames)
 		api.POST("/leaderboard/submit", h.SubmitLeaderboard)
 		api.GET("/records/my", h.GetMyRecords)
 		api.POST("/records/reset", h.ResetRecords)
@@ -350,12 +356,12 @@ func (h *Handler) SubmitPassPlayAnswer(c *gin.Context) {
 	})
 }
 
-// GetLeaderboard handles fetching ranked scores (Deduplicated per player)
+// GetLeaderboard handles fetching ranked scores with category filtering
 func (h *Handler) GetLeaderboard(c *gin.Context) {
 	category := c.Query("category")
 	difficulty := c.Query("difficulty")
 	mode := c.Query("mode")
-	limitStr := c.DefaultQuery("limit", "25")
+	limitStr := c.DefaultQuery("limit", "35")
 	limit, _ := strconv.Atoi(limitStr)
 
 	entries, err := h.db.GetLeaderboard(category, difficulty, mode, limit)
@@ -365,23 +371,121 @@ func (h *Handler) GetLeaderboard(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"category":    category,
+		"total":       len(entries),
 		"leaderboard": entries,
 	})
 }
 
-// GetMyRecords returns historical records for user's profile
-func (h *Handler) GetMyRecords(c *gin.Context) {
-	playerName := c.DefaultQuery("player_name", "Player 1")
-	records, err := h.db.GetPlayerRecords(playerName)
+// GetMultiplayerLeaderboard returns all multiplayer matches with winner breakdown
+// GetProfile retrieves the active persistent profile from SQLite
+func (h *Handler) GetProfile(c *gin.Context) {
+	profile, err := h.db.GetActiveProfile()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"profile": profile,
+	})
+}
+
+// SaveProfile updates or saves player profile permanently into SQLite
+func (h *Handler) SaveProfile(c *gin.Context) {
+	var req models.UserProfile
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.PlayerName == "" {
+		req.PlayerName = "Clay"
+	}
+	if req.AvatarEmoji == "" {
+		req.AvatarEmoji = "🎧"
+	}
+	if req.AvatarColor == "" {
+		req.AvatarColor = "#c0c1ff"
+	}
+
+	if err := h.db.SaveProfile(&req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "saved",
+		"profile": req,
+	})
+}
+
+// GetSoloGames returns all played solo games sorted newest first with category filter
+func (h *Handler) GetSoloGames(c *gin.Context) {
+	category := c.Query("category")
+	limitStr := c.DefaultQuery("limit", "50")
+	limit, _ := strconv.Atoi(limitStr)
+
+	games, err := h.db.GetAllSoloGames(category, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"player_name": playerName,
-		"total_games": len(records),
-		"records":     records,
+		"category": category,
+		"total":    len(games),
+		"games":    games,
+	})
+}
+
+// GetMultiplayerGames returns all played multiplayer matches sorted newest first with category filter
+func (h *Handler) GetMultiplayerGames(c *gin.Context) {
+	category := c.Query("category")
+	limitStr := c.DefaultQuery("limit", "50")
+	limit, _ := strconv.Atoi(limitStr)
+
+	matches, err := h.db.GetAllMultiplayerGames(category, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"category": category,
+		"total":    len(matches),
+		"matches":  matches,
+	})
+}
+
+// GetMyRecords returns historical records for user's profile with calculated high scores and total accumulated score
+func (h *Handler) GetMyRecords(c *gin.Context) {
+	playerName := c.DefaultQuery("player_name", "Clay")
+	records, err := h.db.GetPlayerRecords(playerName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	highestScore, totalScore, totalGames, bestStreak, _ := h.db.GetPlayerStats(playerName)
+	if totalGames == 0 && len(records) > 0 {
+		totalGames = len(records)
+		for _, r := range records {
+			if r.Score > highestScore {
+				highestScore = r.Score
+			}
+			totalScore += r.Score
+			if r.MaxStreak > bestStreak {
+				bestStreak = r.MaxStreak
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"player_name":             playerName,
+		"total_games":             totalGames,
+		"highest_score":           highestScore,
+		"total_accumulated_score": totalScore,
+		"best_streak":             bestStreak,
+		"records":                 records,
 	})
 }
 

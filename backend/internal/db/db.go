@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,31 +38,75 @@ func InitDB() (*Database, error) {
 	}
 
 	// Auto-migrate tables
-	if err := gormDB.AutoMigrate(&models.Song{}, &models.LeaderboardEntry{}); err != nil {
+	if err := gormDB.AutoMigrate(&models.Song{}, &models.LeaderboardEntry{}, &models.UserProfile{}); err != nil {
 		return nil, err
 	}
 
 	database := &Database{DB: gormDB}
-	database.seedInitialHighScores()
+	database.seedInitialData()
 
 	return database, nil
 }
 
-// seedInitialHighScores sets initial benchmark players only if empty
-func (d *Database) seedInitialHighScores() {
+// seedInitialData sets initial benchmark player and default profile if empty
+func (d *Database) seedInitialData() {
+	var profileCount int64
+	d.DB.Model(&models.UserProfile{}).Count(&profileCount)
+	if profileCount == 0 {
+		d.DB.Create(&models.UserProfile{
+			PlayerName:  "Clay",
+			AvatarEmoji: "🎧",
+			AvatarColor: "#c0c1ff",
+			IsActive:    true,
+		})
+	}
+
 	var count int64
 	d.DB.Model(&models.LeaderboardEntry{}).Count(&count)
 	if count == 0 {
 		samples := []models.LeaderboardEntry{
-			{PlayerName: "NairobiGroover", AvatarEmoji: "🦁", AvatarColor: "#FF5722", Score: 2450, Category: "kenyan", Difficulty: "medium", GameMode: "solo", MaxStreak: 8, AccuracyPct: 100, CreatedAt: time.Now().Add(-2 * time.Hour)},
-			{PlayerName: "AfroQueen", AvatarEmoji: "👑", AvatarColor: "#EC4899", Score: 2180, Category: "afrobeats", Difficulty: "medium", GameMode: "solo", MaxStreak: 7, AccuracyPct: 90, CreatedAt: time.Now().Add(-5 * time.Hour)},
-			{PlayerName: "RhymeMaster", AvatarEmoji: "🎧", AvatarColor: "#7C3AED", Score: 1950, Category: "hiphop", Difficulty: "hard", GameMode: "solo", MaxStreak: 5, AccuracyPct: 80, CreatedAt: time.Now().Add(-12 * time.Hour)},
-			{PlayerName: "PopStar254", AvatarEmoji: "⭐", AvatarColor: "#00E5FF", Score: 1800, Category: "pop", Difficulty: "easy", GameMode: "solo", MaxStreak: 6, AccuracyPct: 95, CreatedAt: time.Now().Add(-24 * time.Hour)},
+			{PlayerName: "NairobiGroover", AvatarEmoji: "🎧", AvatarColor: "#c0c1ff", Score: 2450, Category: "kenyan", Difficulty: "medium", GameMode: "solo", MaxStreak: 8, AccuracyPct: 100, CreatedAt: time.Now().Add(-2 * time.Hour)},
+			{PlayerName: "AfroQueen", AvatarEmoji: "🔥", AvatarColor: "#ffb95f", Score: 2180, Category: "afrobeats", Difficulty: "medium", GameMode: "solo", MaxStreak: 7, AccuracyPct: 90, CreatedAt: time.Now().Add(-5 * time.Hour)},
+			{PlayerName: "RhymeMaster", AvatarEmoji: "⚡", AvatarColor: "#4edea3", Score: 1950, Category: "hiphop", Difficulty: "hard", GameMode: "solo", MaxStreak: 5, AccuracyPct: 80, CreatedAt: time.Now().Add(-12 * time.Hour)},
+			{PlayerName: "PopStar254", AvatarEmoji: "⭐", AvatarColor: "#70d6ff", Score: 1800, Category: "pop", Difficulty: "easy", GameMode: "solo", MaxStreak: 6, AccuracyPct: 95, CreatedAt: time.Now().Add(-24 * time.Hour)},
+			{PlayerName: "RootsReggaeDJ", AvatarEmoji: "🎧", AvatarColor: "#ffb95f", Score: 1720, Category: "reggae", Difficulty: "medium", GameMode: "solo", MaxStreak: 5, AccuracyPct: 85, CreatedAt: time.Now().Add(-48 * time.Hour)},
+			{PlayerName: "GospelVibrations", AvatarEmoji: "⭐", AvatarColor: "#70d6ff", Score: 1650, Category: "gospel", Difficulty: "medium", GameMode: "solo", MaxStreak: 4, AccuracyPct: 80, CreatedAt: time.Now().Add(-72 * time.Hour)},
 		}
 		for _, s := range samples {
 			d.DB.Create(&s)
 		}
 	}
+}
+
+// GetActiveProfile retrieves the saved player profile from SQLite
+func (d *Database) GetActiveProfile() (*models.UserProfile, error) {
+	var profile models.UserProfile
+	err := d.DB.Order("updated_at DESC").First(&profile).Error
+	if err != nil {
+		return &models.UserProfile{
+			PlayerName:  "Clay",
+			AvatarEmoji: "🎧",
+			AvatarColor: "#c0c1ff",
+			IsActive:    true,
+		}, nil
+	}
+	return &profile, nil
+}
+
+// SaveProfile persists or updates the user profile in SQLite
+func (d *Database) SaveProfile(p *models.UserProfile) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var existing models.UserProfile
+	if err := d.DB.First(&existing).Error; err == nil {
+		existing.PlayerName = p.PlayerName
+		existing.AvatarEmoji = p.AvatarEmoji
+		existing.AvatarColor = p.AvatarColor
+		existing.IsActive = true
+		return d.DB.Save(&existing).Error
+	}
+	return d.DB.Create(p).Error
 }
 
 // SaveSongs batch stores or updates songs cleanly
@@ -91,26 +136,72 @@ func (d *Database) SaveLeaderboardEntry(entry *models.LeaderboardEntry) error {
 	return d.DB.Create(entry).Error
 }
 
-// GetLeaderboard retrieves top UNIQUE scores per player name (no duplicates for Player 1!)
+// GetAllSoloGames retrieves all individual solo games played with their real scores, sorted newest first
+func (d *Database) GetAllSoloGames(category string, limit int) ([]models.LeaderboardEntry, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	var entries []models.LeaderboardEntry
+	query := d.DB.Where("game_mode = ? OR game_mode = ''", string(models.ModeSolo)).Order("created_at DESC")
+
+	if category != "" && category != "all" {
+		if strings.HasPrefix(category, "artist:") {
+			query = query.Where("category = ?", category)
+		} else {
+			query = query.Where("category = ? OR category LIKE ?", category, "%"+category+"%")
+		}
+	}
+
+	err := query.Limit(limit).Find(&entries).Error
+	return entries, err
+}
+
+// GetAllMultiplayerGames retrieves all multiplayer matches with winner and opponent breakdown, sorted newest first
+func (d *Database) GetAllMultiplayerGames(category string, limit int) ([]models.LeaderboardEntry, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	var records []models.LeaderboardEntry
+	query := d.DB.Where("game_mode = ?", string(models.ModePassPlay)).Order("created_at DESC")
+
+	if category != "" && category != "all" {
+		if strings.HasPrefix(category, "artist:") {
+			query = query.Where("category = ?", category)
+		} else {
+			query = query.Where("category = ? OR category LIKE ?", category, "%"+category+"%")
+		}
+	}
+
+	err := query.Limit(limit).Find(&records).Error
+	return records, err
+}
+
+// GetLeaderboard retrieves top UNIQUE ranked scores per player name (deduplicated by player name)
 func (d *Database) GetLeaderboard(category, difficulty, mode string, limit int) ([]models.LeaderboardEntry, error) {
 	if limit <= 0 || limit > 100 {
-		limit = 25
+		limit = 35
 	}
 	var entries []models.LeaderboardEntry
 
-	// Deduplicate by player_name, taking only their highest score record
 	subQuery := d.DB.Model(&models.LeaderboardEntry{}).
 		Select("player_name, MAX(score) as max_score")
 
 	if category != "" && category != "all" {
-		subQuery = subQuery.Where("category = ?", category)
+		if strings.HasPrefix(category, "artist:") {
+			subQuery = subQuery.Where("category = ?", category)
+		} else {
+			subQuery = subQuery.Where("category = ? OR category LIKE ?", category, "%"+category+"%")
+		}
 	}
+
 	if difficulty != "" && difficulty != "all" {
 		subQuery = subQuery.Where("difficulty = ?", difficulty)
 	}
+
 	if mode != "" && mode != "all" {
 		subQuery = subQuery.Where("game_mode = ?", mode)
 	}
+
 	subQuery = subQuery.Group("player_name")
 
 	err := d.DB.Model(&models.LeaderboardEntry{}).
@@ -130,8 +221,28 @@ func (d *Database) GetPlayerRecords(playerName string) ([]models.LeaderboardEntr
 	if playerName != "" {
 		query = query.Where("player_name = ?", playerName)
 	}
-	err := query.Limit(50).Find(&records).Error
+	err := query.Limit(100).Find(&records).Error
 	return records, err
+}
+
+// GetPlayerStats computes all-time highest score and total accumulated score directly in SQLite
+func (d *Database) GetPlayerStats(playerName string) (highestScore int, totalScore int, totalGames int, bestStreak int, err error) {
+	type StatsResult struct {
+		MaxScore   int
+		TotalScore int
+		GameCount  int
+		MaxStreak  int
+	}
+	var res StatsResult
+	query := d.DB.Model(&models.LeaderboardEntry{}).
+		Select("COALESCE(MAX(score), 0) as max_score, COALESCE(SUM(score), 0) as total_score, COUNT(*) as game_count, COALESCE(MAX(max_streak), 0) as max_streak")
+
+	if playerName != "" {
+		query = query.Where("player_name = ?", playerName)
+	}
+
+	err = query.Scan(&res).Error
+	return res.MaxScore, res.TotalScore, res.GameCount, res.MaxStreak, err
 }
 
 // ClearAllRecords completely clears leaderboard and player records

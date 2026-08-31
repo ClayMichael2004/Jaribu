@@ -151,7 +151,20 @@ type LeaderboardEntry struct {
 	GameMode    string    `json:"game_mode" gorm:"index"`
 	MaxStreak   int       `json:"max_streak"`
 	AccuracyPct int       `json:"accuracy_pct"`
+	Opponents   string    `json:"opponents,omitempty"`
+	MatchWinner string    `json:"match_winner,omitempty"`
 	CreatedAt   time.Time `json:"created_at" gorm:"autoCreateTime"`
+}
+
+// UserProfile stores the current player's persistent identity in SQLite
+type UserProfile struct {
+	ID          uint      `json:"id" gorm:"primaryKey;autoIncrement"`
+	PlayerName  string    `json:"player_name" gorm:"uniqueIndex"`
+	AvatarEmoji string    `json:"avatar_emoji"`
+	AvatarColor string    `json:"avatar_color"`
+	IsActive    bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt   time.Time `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 // CategoryInfo details available music collections
