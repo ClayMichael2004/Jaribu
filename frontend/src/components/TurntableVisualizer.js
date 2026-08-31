@@ -7,31 +7,32 @@ export default function TurntableVisualizer({
   isPlaying = false,
   categoryEmoji = '🇰🇪',
   durationSec = 8,
+  size = 'normal', // 'normal' | 'hero' | 'compact'
   onTogglePlay,
 }) {
   const spinValue = useRef(new Animated.Value(0)).current;
   const auraPulse = useRef(new Animated.Value(1)).current;
   const barHeights = useRef([
-    new Animated.Value(15),
-    new Animated.Value(35),
-    new Animated.Value(60),
-    new Animated.Value(25),
-    new Animated.Value(75),
+    new Animated.Value(12),
+    new Animated.Value(28),
     new Animated.Value(45),
-    new Animated.Value(55),
-    new Animated.Value(30),
-    new Animated.Value(68),
     new Animated.Value(20),
+    new Animated.Value(55),
+    new Animated.Value(35),
+    new Animated.Value(42),
+    new Animated.Value(25),
+    new Animated.Value(50),
+    new Animated.Value(16),
   ]).current;
 
-  // Spin animation for the vinyl
+  // Continuous smooth spin animation
   useEffect(() => {
     let spinAnimation;
     if (isPlaying) {
       spinAnimation = Animated.loop(
         Animated.timing(spinValue, {
           toValue: 1,
-          duration: 3000,
+          duration: 3500,
           easing: Easing.linear,
           useNativeDriver: true,
         })
@@ -43,14 +44,14 @@ export default function TurntableVisualizer({
     return () => spinAnimation && spinAnimation.stop();
   }, [isPlaying]);
 
-  // Ambient aura pulsing
+  // Ambient neon aura pulsing
   useEffect(() => {
     let pulseAnim;
     if (isPlaying) {
       pulseAnim = Animated.loop(
         Animated.sequence([
-          Animated.timing(auraPulse, { toValue: 1.15, duration: 800, useNativeDriver: true }),
-          Animated.timing(auraPulse, { toValue: 0.95, duration: 800, useNativeDriver: true }),
+          Animated.timing(auraPulse, { toValue: 1.12, duration: 900, useNativeDriver: true }),
+          Animated.timing(auraPulse, { toValue: 0.96, duration: 900, useNativeDriver: true }),
         ])
       );
       pulseAnim.start();
@@ -68,13 +69,13 @@ export default function TurntableVisualizer({
       return Animated.loop(
         Animated.sequence([
           Animated.timing(anim, {
-            toValue: 18 + Math.random() * 52,
-            duration: 120 + (i * 28) % 180,
+            toValue: 14 + Math.random() * 40,
+            duration: 110 + (i * 24) % 150,
             useNativeDriver: false,
           }),
           Animated.timing(anim, {
-            toValue: 8 + Math.random() * 20,
-            duration: 120 + (i * 22) % 160,
+            toValue: 6 + Math.random() * 16,
+            duration: 110 + (i * 20) % 140,
             useNativeDriver: false,
           }),
         ])
@@ -82,7 +83,6 @@ export default function TurntableVisualizer({
     });
 
     Animated.parallel(animations).start();
-
     return () => animations.forEach((a) => a.stop());
   }, [isPlaying]);
 
@@ -91,41 +91,78 @@ export default function TurntableVisualizer({
     outputRange: ['0deg', '360deg'],
   });
 
+  const discSize = size === 'hero' ? 220 : size === 'compact' ? 140 : 180;
+  const outerSize = discSize + 40;
+
   return (
     <View style={styles.container}>
-      {/* Ambient Glow Aura */}
+      {/* Outer Neon Glow Pulse Ring from Stitch */}
       <Animated.View
         style={[
-          styles.glowAura,
-          isPlaying && styles.glowAuraActive,
-          { transform: [{ scale: isPlaying ? auraPulse : 1 }] },
+          styles.outerPulseRing,
+          {
+            width: outerSize,
+            height: outerSize,
+            borderRadius: outerSize / 2,
+            transform: [{ scale: isPlaying ? auraPulse : 1 }],
+          },
+        ]}
+      />
+      <View
+        style={[
+          styles.innerPulseRing,
+          {
+            width: outerSize - 16,
+            height: outerSize - 16,
+            borderRadius: (outerSize - 16) / 2,
+          },
         ]}
       />
 
-      {/* Vinyl Disc Section (Tappable to play/pause snippet) */}
+      {/* Vinyl Disc Container */}
       <TouchableOpacity
         activeOpacity={0.9}
         onPress={() => {
           audioManager.unlockAudio();
           if (onTogglePlay) onTogglePlay();
         }}
-        style={styles.turntableCase}
+        style={[
+          styles.turntableCase,
+          { width: discSize + 20, height: discSize + 20 },
+        ]}
       >
         <Animated.View
           style={[
             styles.vinylDisc,
+            {
+              width: discSize,
+              height: discSize,
+              borderRadius: discSize / 2,
+              transform: [{ rotate: spin }],
+            },
             isPlaying && styles.vinylGlow,
-            { transform: [{ rotate: spin }] },
           ]}
         >
-          {/* Vinyl Grooves with metallic reflection rims */}
-          <View style={styles.grooveRing4}>
-            <View style={styles.grooveRing3}>
-              <View style={styles.grooveRing2}>
-                <View style={styles.grooveRing1}>
-                  {/* Center Sticker Label */}
-                  <View style={styles.centerLabel}>
-                    <Text style={styles.labelEmoji}>{isPlaying ? '🔊' : categoryEmoji}</Text>
+          {/* Concentric Vinyl Grooves */}
+          <View style={[styles.grooveRing, { width: discSize * 0.86, height: discSize * 0.86, borderRadius: (discSize * 0.86) / 2 }]}>
+            <View style={[styles.grooveRing, { width: discSize * 0.72, height: discSize * 0.72, borderRadius: (discSize * 0.72) / 2 }]}>
+              <View style={[styles.grooveRing, { width: discSize * 0.58, height: discSize * 0.58, borderRadius: (discSize * 0.58) / 2 }]}>
+                <View style={[styles.grooveRing, { width: discSize * 0.44, height: discSize * 0.44, borderRadius: (discSize * 0.44) / 2 }]}>
+                  {/* Glowing Center Core Label */}
+                  <View
+                    style={[
+                      styles.centerLabel,
+                      {
+                        width: discSize * 0.32,
+                        height: discSize * 0.32,
+                        borderRadius: (discSize * 0.32) / 2,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.labelEmoji, { fontSize: discSize * 0.12 }]}>
+                      {isPlaying ? '🔊' : categoryEmoji}
+                    </Text>
+                    {/* Emerald Center Spindle Core */}
                     <View style={styles.centerSpindle} />
                   </View>
                 </View>
@@ -133,16 +170,9 @@ export default function TurntableVisualizer({
             </View>
           </View>
         </Animated.View>
-
-        {/* Tone Arm Needle with Pivot Joint */}
-        <View style={[styles.toneArmBase, isPlaying && styles.toneArmActive]}>
-          <View style={styles.toneArmPivot} />
-          <View style={styles.toneArmRod} />
-          <View style={styles.toneArmCartridge} />
-        </View>
       </TouchableOpacity>
 
-      {/* Modern Neon Spectrum Visualizer Bars */}
+      {/* Modern Neon Equalizer Spectrum */}
       <View style={styles.equalizerContainer}>
         {barHeights.map((animHeight, idx) => (
           <Animated.View
@@ -155,27 +185,27 @@ export default function TurntableVisualizer({
                   idx % 3 === 0
                     ? COLORS.primary
                     : idx % 3 === 1
-                    ? COLORS.accentMint
-                    : COLORS.accentCyan,
+                    ? COLORS.secondary
+                    : COLORS.tertiary,
               },
             ]}
           />
         ))}
       </View>
 
-      {/* Interactive Capsule Button */}
+      {/* Interactive Pill Play/Pause Control */}
       <TouchableOpacity
-        activeOpacity={0.8}
+        activeOpacity={0.85}
         style={[styles.statusCapsule, isPlaying ? styles.capsulePlaying : styles.capsulePaused]}
         onPress={() => {
           audioManager.unlockAudio();
           if (onTogglePlay) onTogglePlay();
         }}
       >
-        <View style={[styles.capsuleIconBg, { backgroundColor: isPlaying ? COLORS.accentMint : COLORS.primary }]}>
+        <View style={[styles.capsuleIconBg, { backgroundColor: isPlaying ? COLORS.secondary : COLORS.primary }]}>
           <Text style={styles.capsuleIcon}>{isPlaying ? '❚❚' : '▶'}</Text>
         </View>
-        <Text style={styles.capsuleText}>
+        <Text style={[styles.capsuleText, { color: isPlaying ? COLORS.secondaryFixed : COLORS.primaryLight }]}>
           {isPlaying ? `PLAYING BEAT (${durationSec}s)` : 'TAP TO PLAY BEAT 🎵'}
         </Text>
       </TouchableOpacity>
@@ -187,23 +217,25 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: 10,
+    marginVertical: 12,
     position: 'relative',
   },
-  glowAura: {
+  outerPulseRing: {
     position: 'absolute',
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: 'rgba(255, 87, 34, 0.08)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(192, 193, 255, 0.25)',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
   },
-  glowAuraActive: {
-    backgroundColor: 'rgba(0, 230, 118, 0.14)',
+  innerPulseRing: {
+    position: 'absolute',
+    borderWidth: 1,
+    borderColor: 'rgba(78, 222, 163, 0.2)',
   },
   turntableCase: {
     position: 'relative',
-    width: 210,
-    height: 210,
     alignItems: 'center',
     justifyContent: 'center',
     ...Platform.select({
@@ -211,174 +243,111 @@ const styles = StyleSheet.create({
     }),
   },
   vinylDisc: {
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: '#0A0E17',
-    borderWidth: 3,
-    borderColor: '#1F293D',
+    backgroundColor: '#0e0e0e',
+    borderWidth: 2,
+    borderColor: '#353534',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.6,
+    shadowRadius: 18,
+    elevation: 12,
   },
   vinylGlow: {
     borderColor: COLORS.primary,
-    shadowColor: COLORS.accentMint,
-    shadowOpacity: 0.6,
-    shadowRadius: 20,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.5,
+    shadowRadius: 28,
   },
-  grooveRing4: {
-    width: 156,
-    height: 156,
-    borderRadius: 78,
+  grooveRing: {
     borderWidth: 1,
-    borderColor: '#172033',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  grooveRing3: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    borderWidth: 1,
-    borderColor: '#24324D',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  grooveRing2: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
-    borderWidth: 1,
-    borderColor: '#1D283E',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  grooveRing1: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 1,
-    borderColor: '#2E3E61',
+    borderColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   centerLabel: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.surfaceContainerHigh,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2.5,
-    borderColor: '#FFFFFF',
-    shadowColor: '#000',
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    shadowColor: COLORS.primary,
     shadowOpacity: 0.4,
-    shadowRadius: 4,
+    shadowRadius: 10,
   },
   labelEmoji: {
-    fontSize: 22,
+    textAlign: 'center',
   },
   centerSpindle: {
     position: 'absolute',
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#080B11',
-    borderWidth: 1.5,
-    borderColor: '#FFD700',
-  },
-  toneArmBase: {
-    position: 'absolute',
-    right: 10,
-    top: 12,
-    alignItems: 'center',
-  },
-  toneArmActive: {
-    transform: [{ rotate: '-16deg' }],
-  },
-  toneArmPivot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#374761',
-    borderWidth: 2,
-    borderColor: '#64748B',
-  },
-  toneArmRod: {
-    width: 3.5,
-    height: 75,
-    backgroundColor: '#CBD5E1',
-    marginTop: -2,
-    borderRadius: 2,
-  },
-  toneArmCartridge: {
-    width: 10,
-    height: 18,
-    backgroundColor: COLORS.accentMint,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: '#FFFFFF',
+    backgroundColor: COLORS.secondary,
+    shadowColor: COLORS.secondary,
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
   },
   equalizerContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'center',
-    height: 40,
+    height: 36,
     gap: 5,
-    marginTop: 8,
+    marginTop: 12,
   },
   equalizerBar: {
-    width: 5,
-    borderRadius: 3,
+    width: 4,
+    borderRadius: 2,
   },
   statusCapsule: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 16,
-    borderRadius: 25,
-    marginTop: 10,
-    borderWidth: 2,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: 9999,
+    marginTop: 12,
+    borderWidth: 1.5,
     ...Platform.select({
-      web: { cursor: 'pointer' },
+      web: {
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+      },
     }),
   },
   capsulePlaying: {
-    backgroundColor: 'rgba(0, 230, 118, 0.15)',
-    borderColor: COLORS.accentMint,
-    shadowColor: COLORS.accentMint,
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
+    backgroundColor: 'rgba(78, 222, 163, 0.12)',
+    borderColor: COLORS.secondary,
+    shadowColor: COLORS.secondary,
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
   },
   capsulePaused: {
-    backgroundColor: 'rgba(255, 87, 34, 0.15)',
+    backgroundColor: 'rgba(192, 193, 255, 0.1)',
     borderColor: COLORS.primary,
     shadowColor: COLORS.primary,
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.25,
     shadowRadius: 10,
   },
   capsuleIconBg: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
   },
   capsuleIcon: {
-    color: '#080B11',
-    fontSize: 10,
+    color: '#131313',
+    fontSize: 9,
     fontWeight: '900',
   },
   capsuleText: {
-    color: COLORS.text,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 0.8,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
 });
+
