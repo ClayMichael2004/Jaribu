@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -420,14 +421,22 @@ func (e *Engine) SubmitPassPlayAnswer(sessionID, selectedOptionID string, timeTa
 		}
 	}
 
-	scores := make([]models.PlayerScore, len(session.Players))
-	for i, p := range session.Players {
+	// Sort players descending by score for accurate ranking
+	sortedPlayers := make([]models.PlayerProfile, len(session.Players))
+	copy(sortedPlayers, session.Players)
+	sort.Slice(sortedPlayers, func(i, j int) bool {
+		return sortedPlayers[i].Score > sortedPlayers[j].Score
+	})
+
+	scores := make([]models.PlayerScore, len(sortedPlayers))
+	for i, p := range sortedPlayers {
 		scores[i] = models.PlayerScore{
 			PlayerID:    p.ID,
 			PlayerName:  p.Name,
 			AvatarEmoji: p.AvatarEmoji,
 			AvatarColor: p.AvatarColor,
 			Score:       p.Score,
+			Rank:        i + 1,
 		}
 	}
 
@@ -455,6 +464,31 @@ func (e *Engine) SubmitPassPlayAnswer(sessionID, selectedOptionID string, timeTa
 	if session.CurrentRound >= session.TotalRounds {
 		session.IsFinished = true
 		isGameOver = true
+
+		winner := sortedPlayers[0]
+
+		// Build breakdown of opponents and points
+		var summaries []string
+		for idx, p := range sortedPlayers {
+			summaries = append(summaries, fmt.Sprintf("#%d %s (%d pts)", idx+1, p.Name, p.Score))
+		}
+		opponentsSummary := strings.Join(summaries, " • ")
+
+		// Record each player's score to SQLite
+		for _, p := range sortedPlayers {
+			_ = e.db.SaveLeaderboardEntry(&models.LeaderboardEntry{
+				PlayerName:  p.Name,
+				AvatarEmoji: p.AvatarEmoji,
+				AvatarColor: p.AvatarColor,
+				Score:       p.Score,
+				Category:    session.Category,
+				Difficulty:  string(session.Difficulty),
+				GameMode:    string(models.ModePassPlay),
+				MaxStreak:   p.MaxStreak,
+				MatchWinner: winner.Name,
+				Opponents:   opponentsSummary,
+			})
+		}
 	} else {
 		session.CurrentRound++
 		session.CurrentPlayerIndex = (session.CurrentPlayerIndex + 1) % len(session.Players)
