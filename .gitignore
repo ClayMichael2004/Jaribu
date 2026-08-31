@@ -1,12 +1,14 @@
-﻿# Binaries & Executables
+# Binaries & Executables
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 *.bin
-server
-jaribu-server
+/server
+/backend/server
+/jaribu-server
+/backend/jaribu-server
 /backend/jaribu-server.exe
 /backend/server.exe
 
