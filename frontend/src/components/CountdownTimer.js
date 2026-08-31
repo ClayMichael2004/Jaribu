@@ -19,7 +19,6 @@ export default function CountdownTimer({
   const hasFiredRef = useRef(false);
 
   useEffect(() => {
-    // Reset state whenever question, duration, or active state changes
     setTimeLeftMs(durationMs);
     startTimeRef.current = Date.now();
     lastTickSecRef.current = Math.ceil(durationMs / 1000);
@@ -45,15 +44,14 @@ export default function CountdownTimer({
         onTick(elapsed);
       }
 
-      // Audio tick and pulse warning during last 3 seconds
       const currentSec = Math.ceil(remaining / 1000);
       if (currentSec <= 3 && currentSec > 0 && currentSec !== lastTickSecRef.current) {
         lastTickSecRef.current = currentSec;
         audioManager.playTick();
 
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.25, duration: 90, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 120, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.2, duration: 80, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 100, useNativeDriver: true }),
         ]).start();
       }
 
@@ -83,24 +81,24 @@ export default function CountdownTimer({
   const seconds = (timeLeftMs / 1000).toFixed(1);
   const ratio = timeLeftMs / durationMs;
 
-  let timerColor = COLORS.accentMint;
-  let timerShadow = COLORS.accentMintGlow;
+  let timerColor = COLORS.primary;
+  let timerShadow = 'rgba(192, 193, 255, 0.8)';
   if (ratio <= 0.3) {
-    timerColor = COLORS.accentRed;
-    timerShadow = 'rgba(239, 68, 68, 0.4)';
+    timerColor = COLORS.error;
+    timerShadow = 'rgba(255, 180, 171, 0.8)';
   } else if (ratio <= 0.6) {
-    timerColor = COLORS.accentAmber;
-    timerShadow = 'rgba(255, 179, 0, 0.4)';
+    timerColor = COLORS.tertiary;
+    timerShadow = 'rgba(255, 185, 95, 0.8)';
   }
 
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <View style={styles.labelGroup}>
-          <Text style={styles.timerIcon}>⏱️</Text>
-          <Text style={styles.label}>TIME LEFT</Text>
+          <View style={[styles.statusDot, { backgroundColor: timerColor }]} />
+          <Text style={styles.label}>BEAT REMAINING</Text>
         </View>
-        <Animated.View style={[styles.timerBadge, { borderColor: timerColor, backgroundColor: timerShadow }]}>
+        <Animated.View style={[styles.timerBadge, { backgroundColor: 'rgba(255, 255, 255, 0.05)', borderColor: 'rgba(255, 255, 255, 0.1)' }]}>
           <Animated.Text
             style={[
               styles.timerText,
@@ -119,6 +117,7 @@ export default function CountdownTimer({
             styles.bar,
             {
               backgroundColor: timerColor,
+              shadowColor: timerShadow,
               width: `${Math.max(0, ratio * 100)}%`,
             },
           ]}
@@ -131,51 +130,59 @@ export default function CountdownTimer({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    paddingHorizontal: 12,
-    marginVertical: 6,
+    maxWidth: 500,
+    alignSelf: 'center',
+    paddingHorizontal: 8,
+    marginVertical: 8,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 8,
   },
   labelGroup: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  timerIcon: {
-    fontSize: 14,
-    marginRight: 5,
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
   },
   label: {
-    color: COLORS.textMuted,
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1.2,
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
   },
   timerBadge: {
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
   },
   timerText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   track: {
     width: '100%',
-    height: 10,
-    backgroundColor: COLORS.surface,
-    borderRadius: 6,
+    height: 6,
+    backgroundColor: COLORS.surfaceContainerHigh,
+    borderRadius: 9999,
     overflow: 'hidden',
-    borderWidth: 1.5,
-    borderColor: COLORS.surfaceBorder,
+    position: 'relative',
   },
   bar: {
     height: '100%',
-    borderRadius: 6,
+    borderRadius: 9999,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
   },
 });
+
